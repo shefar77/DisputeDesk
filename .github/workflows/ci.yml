@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm run typecheck
+      - name: Unit + integration tests
+        run: npm test
+      - name: AI eval (rule-based baseline; no keys, no spend)
+        run: npm run eval
+      - run: npm run build
+
+      - name: Postman collection (Newman) against demo mode
+        run: |
+          (cd server && PORT=8787 DEMO_MODE=true PGLITE_DIR=memory:// POLL_ENABLED=false node --import tsx src/index.ts &) 
+          for i in $(seq 1 60); do curl -sf localhost:8787/api/health && break; sleep 1; done
+          npm run postman
+
+      - name: E2E (Playwright)
+        run: |
+          npx playwright install --with-deps chromium
+          npm run test:e2e

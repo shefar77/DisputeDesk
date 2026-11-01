@@ -1,0 +1,65 @@
+# Render Blueprint: web service (API + built UI), managed Postgres, and a cron
+# job that reconciles with PayPal as a safety net for missed webhooks (FR-2).
+# Secrets marked sync:false are entered in the Render dashboard, never committed.
+databases:
+  - name: disputedesk-db
+    plan: free
+    databaseName: disputedesk
+    user: disputedesk
+
+services:
+  - type: web
+    name: disputedesk
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: disputedesk-db
+          property: connectionString
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: CRON_SECRET
+        generateValue: true
+      - key: DEMO_PASSWORD
+        sync: false
+      - key: PAYPAL_CLIENT_ID
+        sync: false
+      - key: PAYPAL_CLIENT_SECRET
+        sync: false
+      - key: PAYPAL_WEBHOOK_ID
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: LLM_DAILY_CAP_USD
+        value: "5"
+      - key: ELASTIC_CLOUD_ID
+        sync: false
+      - key: ELASTIC_API_KEY
+        sync: false
+      - key: KERNEL_API_KEY
+        sync: false
+
+  - type: cron
+    name: disputedesk-poll
+    runtime: node
+    plan: starter
+    schedule: "*/10 * * * *"
+    buildCommand: "true"
+    startCommand: >-
+      curl -fsS -X POST "$APP_URL/api/cron/poll" -H "x-cron-secret: $CRON_SECRET"
+    envVars:
+      - key: APP_URL
+        sync: false
+      - key: CRON_SECRET
+        fromService:
+          name: disputedesk
+          type: web
+          envVarKey: CRON_SECRET

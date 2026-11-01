@@ -1,0 +1,32 @@
+# `docker compose up` runs DisputeDesk against a real Postgres in fallback mode:
+# demo fixtures, Postgres full-text search, rule-based generator. No keys needed.
+# Add keys to .env to enable PayPal sandbox / Anthropic / Elastic / KERNEL.
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: disputedesk
+      POSTGRES_PASSWORD: disputedesk
+      POSTGRES_DB: disputedesk
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U disputedesk"]
+      interval: 2s
+      retries: 20
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgres://disputedesk:disputedesk@db:5432/disputedesk
+    ports:
+      - "8787:8787"
+
+volumes:
+  pgdata:

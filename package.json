@@ -1,0 +1,34 @@
+{
+  "name": "disputedesk",
+  "private": true,
+  "version": "1.0.0",
+  "description": "An open-source, human-approved AI desk that gathers evidence and prepares responses to PayPal disputes before the seller deadline.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c cyan,magenta \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "npm run dev -w @disputedesk/server",
+    "dev:web": "npm run dev -w @disputedesk/web",
+    "build": "npm run build -w @disputedesk/web",
+    "start": "npm run start -w @disputedesk/server",
+    "seed": "npm run seed -w @disputedesk/server",
+    "typecheck": "tsc -p server/tsconfig.json --noEmit && tsc -p web/tsconfig.json --noEmit",
+    "test": "npm run test -w @disputedesk/server",
+    "eval": "npm run eval -w @disputedesk/server",
+    "test:e2e": "playwright test",
+    "postman": "newman run postman/DisputeDesk.postman_collection.json -e postman/local.postman_environment.json --folder \"DisputeDesk API\""
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.1",
+    "concurrently": "^9.1.2",
+    "newman": "^6.2.1",
+    "typescript": "^5.7.3"
+  }
+}

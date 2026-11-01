@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.data/
+.env
+.env.local
+*.log
+coverage/
+playwright-report/
+test-results/
+uploads/
+captures/
+.DS_Store
+PRD.md
+RESEARCH_AND_SELECTION.md

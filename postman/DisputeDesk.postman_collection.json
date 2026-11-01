@@ -1,0 +1,754 @@
+{
+  "info": {
+    "name": "DisputeDesk",
+    "_postman_id": "5b1e0c4e-7d1a-4c55-9a0e-0d15d0d35c01",
+    "description": "DisputeDesk internal API (run in CI against demo mode via Newman) and the PayPal sandbox Disputes calls used for the Day-1 spike. The PayPal folder needs sandbox credentials and is not run in CI.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "DisputeDesk API",
+      "description": "npm run postman — the server must be running in demo mode on {{baseUrl}}.",
+      "item": [
+        {
+          "name": "Session (CSRF token)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.environment.set('csrf', j.csrfToken);",
+                  "pm.test('demo mode', () => pm.expect(j.mode).to.eql('demo'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/session",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "session"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Health",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('dependencies list fallbacks', () => pm.response.json().dependencies.forEach((d) => pm.expect(d).to.have.property('fallback')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "health"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Reset demo",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-csrf-token",
+                "value": "{{csrf}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/demo/reset",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "demo",
+                "reset"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          }
+        },
+        {
+          "name": "Queue (deadline-first)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const items = pm.response.json().items;",
+                  "pm.test('14 fixture disputes', () => pm.expect(items.length).to.eql(14));",
+                  "const open = items.filter((i) => i.status !== 'RESOLVED').map((i) => i.urgency.sortKey);",
+                  "pm.test('sorted by deadline', () => pm.expect(open).to.eql([...open].sort((a, b) => a - b)));",
+                  "pm.test('fixtures are labelled', () => items.forEach((i) => pm.expect(i.fixture).to.eql(true)));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/disputes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "disputes"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Dispute detail",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const d = pm.response.json();",
+                  "pm.test('rubric score present', () => pm.expect(d.plan.completeness).to.be.within(0, 100));",
+                  "pm.test('actions come from links', () => pm.expect(d.allowedActions).to.include('provide-evidence'));",
+                  "const ids = d.evidence.map((e) => e.id);",
+                  "pm.test('draft cites only existing evidence', () => d.draft.evidenceRefs.forEach((r) => pm.expect(ids).to.include(r)));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/disputes/PP-D-FIX-00001",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "disputes",
+                "PP-D-FIX-00001"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Write with a wrong CSRF token is refused",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.request.headers.upsert({ key: 'x-csrf-token', value: 'not-the-token' });"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-csrf-token",
+                "value": "{{csrf}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/disputes/PP-D-FIX-00001/preview",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "disputes",
+                "PP-D-FIX-00001",
+                "preview"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"provide-evidence\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Preview provide-evidence",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const p = pm.response.json();",
+                  "pm.environment.set('payloadHash', p.payloadSha256);",
+                  "pm.test('sha256 hex', () => pm.expect(p.payloadSha256).to.match(/^[a-f0-9]{64}$/));",
+                  "pm.test('evidence_info only on PROOF_OF_FULFILLMENT', () => p.request.body.evidences.forEach((e) => { if (e.evidence_type !== 'PROOF_OF_FULFILLMENT') pm.expect(e).to.not.have.property('evidence_info'); }));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-csrf-token",
+                "value": "{{csrf}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/disputes/PP-D-FIX-00001/preview",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "disputes",
+                "PP-D-FIX-00001",
+                "preview"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"provide-evidence\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Approve with a wrong hash is refused",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409', () => pm.response.to.have.status(409));",
+                  "pm.test('problem type', () => pm.expect(pm.response.json().type).to.include('hash-mismatch'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-csrf-token",
+                "value": "{{csrf}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/disputes/PP-D-FIX-00001/approve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "disputes",
+                "PP-D-FIX-00001",
+                "approve"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"provide-evidence\",\n  \"payload_sha256\": \"0000000000000000000000000000000000000000000000000000000000000000\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Approve & submit",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json();",
+                  "pm.test('recorded, not sent (demo)', () => pm.expect(r.simulated).to.eql(true));",
+                  "pm.test('status read back from PayPal', () => pm.expect(r.disputeStatus).to.eql('UNDER_REVIEW'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-csrf-token",
+                "value": "{{csrf}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/disputes/PP-D-FIX-00001/approve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "disputes",
+                "PP-D-FIX-00001",
+                "approve"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"provide-evidence\",\n  \"payload_sha256\": \"{{payloadHash}}\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Replaying the same approval is refused",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409', () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-csrf-token",
+                "value": "{{csrf}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/disputes/PP-D-FIX-00001/approve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "disputes",
+                "PP-D-FIX-00001",
+                "approve"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"provide-evidence\",\n  \"payload_sha256\": \"{{payloadHash}}\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Offer above the disputed amount is refused",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422', () => pm.response.to.have.status(422));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-csrf-token",
+                "value": "{{csrf}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/disputes/PP-D-FIX-00002/preview",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "disputes",
+                "PP-D-FIX-00002",
+                "preview"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"make-offer\",\n  \"offer\": {\n    \"offer_type\": \"REFUND\",\n    \"amount\": \"999.00\",\n    \"note\": \"test\"\n  }\n}"
+            }
+          }
+        },
+        {
+          "name": "Audit log",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const ev = pm.response.json().entries.map((e) => e.event);",
+                  "pm.test('approval and write recorded', () => { pm.expect(ev).to.include('approval.granted'); pm.expect(ev).to.include('paypal.write'); });",
+                  "pm.test('no bearer tokens', () => pm.expect(pm.response.text()).to.not.match(/Bearer\\s+A21/));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/audit",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "audit"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "PayPal sandbox (needs credentials; not run in CI)",
+      "description": "Day-1 spike calls (PRD §12, gate G0). Fill in the sandbox environment, then run \"OAuth token\" first.",
+      "item": [
+        {
+          "name": "OAuth token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = pm.response.json();",
+                  "pm.environment.set('paypalAccessToken', j.access_token);",
+                  "pm.test('token issued', () => pm.expect(j.access_token).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "{{paypalClientId}}"
+                },
+                {
+                  "key": "password",
+                  "value": "{{paypalClientSecret}}"
+                }
+              ]
+            },
+            "header": [],
+            "url": {
+              "raw": "{{paypalBase}}/v1/oauth2/token",
+              "host": [
+                "{{paypalBase}}"
+              ],
+              "path": [
+                "v1",
+                "oauth2",
+                "token"
+              ]
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "List disputes",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const items = pm.response.json().items || [];",
+                  "if (items[0]) pm.environment.set('disputeId', items[0].dispute_id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{paypalAccessToken}}"
+                }
+              ]
+            },
+            "header": [],
+            "url": {
+              "raw": "{{paypalBase}}/v1/customer/disputes?page_size=20",
+              "host": [
+                "{{paypalBase}}"
+              ],
+              "path": [
+                "v1",
+                "customer",
+                "disputes"
+              ],
+              "query": [
+                {
+                  "key": "page_size",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Show dispute (record the links)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "console.log('rels:', (pm.response.json().links || []).map((l) => l.rel).join(', '));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{paypalAccessToken}}"
+                }
+              ]
+            },
+            "header": [],
+            "url": {
+              "raw": "{{paypalBase}}/v1/customer/disputes/{{disputeId}}",
+              "host": [
+                "{{paypalBase}}"
+              ],
+              "path": [
+                "v1",
+                "customer",
+                "disputes",
+                "{{disputeId}}"
+              ]
+            },
+            "description": "G0 step 2: record which HATEOAS rels appear."
+          }
+        },
+        {
+          "name": "Provide evidence (JSON with tracking)",
+          "event": [],
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{paypalAccessToken}}"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{paypalBase}}/v1/customer/disputes/{{disputeId}}/provide-evidence",
+              "host": [
+                "{{paypalBase}}"
+              ],
+              "path": [
+                "v1",
+                "customer",
+                "disputes",
+                "{{disputeId}}",
+                "provide-evidence"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"evidences\": [\n    {\n      \"evidence_type\": \"PROOF_OF_FULFILLMENT\",\n      \"evidence_info\": {\n        \"tracking_info\": [\n          {\n            \"carrier_name\": \"UPS\",\n            \"tracking_number\": \"1Z999AA10123456784\"\n          }\n        ]\n      },\n      \"notes\": \"Spike test from the DisputeDesk Postman collection (sandbox).\"\n    }\n  ]\n}"
+            },
+            "description": "Only when the provide-evidence link is present. Sandbox only."
+          }
+        },
+        {
+          "name": "Send message",
+          "event": [],
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{paypalAccessToken}}"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{paypalBase}}/v1/customer/disputes/{{disputeId}}/send-message",
+              "host": [
+                "{{paypalBase}}"
+              ],
+              "path": [
+                "v1",
+                "customer",
+                "disputes",
+                "{{disputeId}}",
+                "send-message"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Spike test message (sandbox).\"\n}"
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "List trackers for a transaction",
+          "event": [],
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{paypalAccessToken}}"
+                }
+              ]
+            },
+            "header": [],
+            "url": {
+              "raw": "{{paypalBase}}/v1/shipping/trackers?transaction_id={{transactionId}}",
+              "host": [
+                "{{paypalBase}}"
+              ],
+              "path": [
+                "v1",
+                "shipping",
+                "trackers"
+              ],
+              "query": [
+                {
+                  "key": "transaction_id",
+                  "value": "{{transactionId}}"
+                }
+              ]
+            },
+            "description": ""
+          }
+        }
+      ]
+    }
+  ]
+}
