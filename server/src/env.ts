@@ -159,7 +159,7 @@ export const env = {
   cronSecret: str('CRON_SECRET'),
 
   /** Approver identity recorded on every approval row. */
-  operator: str('OPERATOR_NAME') ?? 'demo-merchant',
+  operator: str('OPERATOR_NAME') ?? 'Demo Merchant',
 } as const;
 
 /** SSRF control (PRD §18): KERNEL may only ever open these hosts. */

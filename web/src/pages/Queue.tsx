@@ -3,7 +3,7 @@
  *
  * Ordering comes from the server and is deterministic (by seller_response_due_date).
  * AG Grid Community: sorting, quick filter, keyboard navigation. Row grouping is an
- * Enterprise feature, so urgency grouping is done with filter chips instead.
+ * Enterprise feature, so urgency grouping is done with the segmented filter instead.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -13,30 +13,36 @@ import {
   AllCommunityModule,
   ModuleRegistry,
   themeQuartz,
+  type CellKeyDownEvent,
   type ColDef,
   type ICellRendererParams,
   type RowClickedEvent,
-  type CellKeyDownEvent,
 } from 'ag-grid-community';
 import { DISPUTE_ACTION_LABELS, type DisputeAction } from '@shared/index.js';
 import { api, money, type QueueItem } from '../api';
-import { BAND_COLOR, FixtureBadge, GatherBadge, StatusBadge, UrgencyBadge, Alert } from '../components';
+import { BAND_COLOR, GatherBadge, Notice, StatusBadge, UrgencyBadge, humanize } from '../components';
+import { Icon, type IconName } from '../icons';
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
 const theme = themeQuartz.withParams({
-  accentColor: '#1d5bd8',
-  borderColor: '#e4e7ec',
-  headerBackgroundColor: '#f9fafb',
-  headerTextColor: '#5d6b82',
+  accentColor: '#2459e0',
+  borderColor: '#e3e8ef',
+  foregroundColor: '#0f1729',
+  headerBackgroundColor: '#f8fafc',
+  headerTextColor: '#5f6b7d',
   headerFontWeight: 600,
-  fontFamily: 'inherit',
+  headerFontSize: 12.5,
+  fontFamily: "'Inter Variable', Inter, system-ui, sans-serif",
   fontSize: 13.5,
-  rowHeight: 48,
-  headerHeight: 40,
+  rowHeight: 52,
+  headerHeight: 42,
+  cellHorizontalPadding: 16,
   wrapperBorderRadius: 0,
   wrapperBorder: false,
-  rowHoverColor: '#f5f8ff',
+  rowBorder: { color: '#eef1f5' },
+  rowHoverColor: '#f6f8fc',
+  selectedRowBackgroundColor: '#eef3ff',
 });
 
 type Filter = 'all' | 'urgent' | 'ready' | 'manual' | 'resolved';
@@ -44,7 +50,7 @@ type Filter = 'all' | 'urgent' | 'ready' | 'manual' | 'resolved';
 const FILTERS: { key: Filter; label: string; test: (r: QueueItem) => boolean }[] = [
   { key: 'all', label: 'All open', test: (r) => r.status !== 'RESOLVED' },
   { key: 'urgent', label: 'Due within 72h', test: (r) => ['OVERDUE', 'CRITICAL', 'URGENT'].includes(r.urgency.level) && r.status !== 'RESOLVED' },
-  { key: 'ready', label: 'Ready to review', test: (r) => r.gatherState === 'READY_FOR_REVIEW' },
+  { key: 'ready', label: 'Ready for review', test: (r) => r.gatherState === 'READY_FOR_REVIEW' },
   { key: 'manual', label: 'Needs attention', test: (r) => r.gatherState === 'NEEDS_MANUAL_REVIEW' || r.gatherState === 'FAILED' },
   { key: 'resolved', label: 'Resolved', test: (r) => r.status === 'RESOLVED' },
 ];
@@ -52,16 +58,37 @@ const FILTERS: { key: Filter; label: string; test: (r: QueueItem) => boolean }[]
 function ScoreCell({ data }: ICellRendererParams<QueueItem>) {
   if (!data) return null;
   if (data.completeness === null) {
-    return <span className="muted small">{data.supported ? '—' : 'Not supported'}</span>;
+    return <span className="muted small">{data.supported ? 'Pending' : 'Manual handling'}</span>;
   }
-  const col = BAND_COLOR[data.band ?? ''] ?? 'var(--grey)';
+  const col = BAND_COLOR[data.band ?? ''] ?? 'var(--neutral)';
   return (
-    <div className="score-cell" title={`${data.completeness}/100 · ${data.band}`}>
+    <div className="score-cell" title={`${data.completeness}/100 · ${humanize(data.band)}`}>
       <span className="score-num">{data.completeness}</span>
       <div className="score-bar" aria-hidden="true">
         <span style={{ width: `${data.completeness}%`, background: col }} />
       </div>
-      <span className="tiny muted" style={{ width: 62 }}>{data.band?.toLowerCase()}</span>
+    </div>
+  );
+}
+
+function Kpi({ icon, tone, label, value, caption, alert = false }: {
+  icon: IconName;
+  tone: string;
+  label: string;
+  value: string | number;
+  caption: string;
+  alert?: boolean;
+}) {
+  return (
+    <div className="card kpi">
+      <span className={`kpi-icon tone-${tone}`}>
+        <Icon name={icon} size={18} />
+      </span>
+      <div className="grow">
+        <div className="kpi-label">{label}</div>
+        <div className={`kpi-value ${alert ? 'alert' : ''}`}>{value}</div>
+        <div className="kpi-caption">{caption}</div>
+      </div>
     </div>
   );
 }
@@ -72,12 +99,14 @@ export function QueuePage() {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>('all');
   const [quick, setQuick] = useState('');
-  const [polling, setPolling] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
 
   const load = useCallback(async () => {
     try {
       const res = await api.disputes();
       setRows(res.items);
+      setUpdatedAt(new Date());
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load disputes');
@@ -97,7 +126,10 @@ export function QueuePage() {
 
   const kpi = useMemo(() => {
     const open = (rows ?? []).filter((r) => r.status !== 'RESOLVED');
-    const due24 = open.filter((r) => r.urgency.level === 'CRITICAL' || r.urgency.level === 'OVERDUE');
+    // A dispute PayPal is already reviewing has no response deadline left to miss.
+    const due24 = open.filter(
+      (r) => r.status !== 'UNDER_REVIEW' && (r.urgency.level === 'CRITICAL' || r.urgency.level === 'OVERDUE'),
+    );
     const ready = open.filter((r) => r.gatherState === 'READY_FOR_REVIEW');
     const atRisk = open.filter((r) => r.allowedActions.length > 0);
     const currency = open[0]?.amountCurrency ?? 'USD';
@@ -112,29 +144,43 @@ export function QueuePage() {
         field: 'urgency',
         width: 158,
         comparator: (a, b) => a.sortKey - b.sortKey,
-        cellRenderer: (p: ICellRendererParams<QueueItem>) => (p.data ? <UrgencyBadge urgency={p.data.urgency} /> : null),
+        cellRenderer: (p: ICellRendererParams<QueueItem>) => {
+          if (!p.data) return null;
+          if (p.data.status === 'RESOLVED') {
+            return (
+              <span className="badge tone-success">
+                <Icon name="checkCircle" />
+                Resolved
+              </span>
+            );
+          }
+          if (p.data.status === 'UNDER_REVIEW') {
+            return (
+              <span className="badge tone-info">
+                <Icon name="clock" />
+                With PayPal
+              </span>
+            );
+          }
+          return <UrgencyBadge urgency={p.data.urgency} />;
+        },
         getQuickFilterText: (p) => p.data?.urgency.label ?? '',
       },
       {
-        headerName: 'Due in',
+        headerName: 'Time left',
         field: 'dueIn',
-        width: 122,
+        width: 126,
         comparator: (_a, _b, na, nb) => (na.data?.urgency.sortKey ?? 0) - (nb.data?.urgency.sortKey ?? 0),
-        cellClass: 'nowrap num strong',
+        valueFormatter: (p) => (p.data?.status === 'RESOLVED' || p.data?.status === 'UNDER_REVIEW' ? '—' : String(p.value ?? '—')),
+        cellClass: 'nowrap num cell-strong',
       },
       {
-        headerName: 'Dispute',
+        headerName: 'Dispute ID',
         field: 'id',
-        width: 196,
-        cellRenderer: (p: ICellRendererParams<QueueItem>) =>
-          p.data ? (
-            <span className="row" style={{ gap: 6, flexWrap: 'nowrap' }}>
-              <span className="cell-id">{p.data.id}</span>
-              {p.data.fixture && <FixtureBadge />}
-            </span>
-          ) : null,
+        width: 152,
+        cellRenderer: (p: ICellRendererParams<QueueItem>) => (p.data ? <span className="cell-id">{p.data.id}</span> : null),
       },
-      { headerName: 'Reason', field: 'reasonLabel', flex: 1, minWidth: 130 },
+      { headerName: 'Reason', field: 'reasonLabel', flex: 1, minWidth: 184, tooltipField: 'reasonLabel' },
       {
         headerName: 'Amount',
         field: 'amountValue',
@@ -142,27 +188,30 @@ export function QueuePage() {
         type: 'rightAligned',
         comparator: (a, b) => Number(a) - Number(b),
         valueFormatter: (p) => (p.data ? money(p.data.amountValue, p.data.amountCurrency) : ''),
-        cellClass: 'num',
+        cellClass: 'num cell-strong',
       },
       {
         headerName: 'PayPal status',
         field: 'status',
-        width: 188,
-        cellRenderer: (p: ICellRendererParams<QueueItem>) => (p.data ? <StatusBadge status={p.data.status} /> : null),
+        width: 160,
+        cellRenderer: (p: ICellRendererParams<QueueItem>) => (p.data ? <StatusBadge status={p.data.status} compact /> : null),
       },
-      { headerName: 'Evidence', field: 'completeness', width: 180, cellRenderer: ScoreCell },
+      { headerName: 'Evidence score', field: 'completeness', width: 160, cellRenderer: ScoreCell },
       {
-        headerName: 'Desk',
+        headerName: 'Review status',
         field: 'gatherState',
-        width: 166,
+        width: 176,
         cellRenderer: (p: ICellRendererParams<QueueItem>) => (p.data ? <GatherBadge state={p.data.gatherState} /> : null),
       },
       {
-        headerName: 'Next action',
+        headerName: 'Recommended',
         field: 'recommendedAction',
-        width: 140,
-        valueFormatter: (p) =>
-          p.value ? DISPUTE_ACTION_LABELS[p.value as DisputeAction]?.label ?? String(p.value) : p.data?.allowedActions.length ? '—' : 'None available',
+        width: 150,
+        valueFormatter: (p) => {
+          if (p.data?.status === 'RESOLVED') return '—';
+          if (!p.data?.allowedActions.length) return 'No action available';
+          return p.value ? (DISPUTE_ACTION_LABELS[p.value as DisputeAction]?.label ?? String(p.value)) : '—';
+        },
         tooltipValueGetter: (p) => p.data?.triageNote ?? null,
       },
     ],
@@ -173,48 +222,70 @@ export function QueuePage() {
 
   return (
     <>
-      <div className="page-head">
+      <div className="page-header">
         <div>
-          <h1>Dispute queue</h1>
-          <p>Soonest deadline first. Ordering is by PayPal&apos;s response due date — never by the AI.</p>
+          <h1 className="page-title">Disputes</h1>
+          <p className="page-subtitle">Prioritised by PayPal&apos;s response deadline, soonest first.</p>
         </div>
-        <button
-          className="btn"
-          disabled={polling}
-          onClick={async () => {
-            setPolling(true);
-            try {
-              await api.poll();
-              await load();
-            } finally {
-              setPolling(false);
-            }
-          }}
-        >
-          {polling ? <span className="spinner" /> : '↻'} Check PayPal now
-        </button>
+        <div className="page-actions">
+          {updatedAt && (
+            <span className="updated">
+              <Icon name="clock" size={13} />
+              Updated {updatedAt.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          )}
+          <button
+            className="btn"
+            disabled={syncing}
+            onClick={async () => {
+              setSyncing(true);
+              try {
+                await api.poll();
+                await load();
+              } finally {
+                setSyncing(false);
+              }
+            }}
+          >
+            {syncing ? <span className="spinner" /> : <Icon name="refresh" size={15} />}
+            Sync with PayPal
+          </button>
+        </div>
       </div>
 
-      <div className="kpis">
-        <div className="card kpi"><div className="label">Open disputes</div><div className="value">{kpi.open}</div><div className="sub">awaiting a decision</div></div>
-        <div className={`card kpi ${kpi.due24 > 0 ? 'alarm' : ''}`}><div className="label">Due within 24h or overdue</div><div className="value">{kpi.due24}</div><div className="sub">handle these first</div></div>
-        <div className="card kpi"><div className="label">Ready for review</div><div className="value">{kpi.ready}</div><div className="sub">evidence gathered and drafted</div></div>
-        <div className="card kpi"><div className="label">Disputed value, actionable</div><div className="value">{kpi.value}</div><div className="sub">across open disputes</div></div>
+      <div className="kpi-grid">
+        <Kpi icon="inbox" tone="info" label="Open disputes" value={kpi.open} caption="Awaiting resolution" />
+        <Kpi icon="alertTriangle" tone="danger" label="Due within 24 hours" value={kpi.due24} caption="Including overdue" alert={kpi.due24 > 0} />
+        <Kpi icon="fileCheck" tone="success" label="Ready for review" value={kpi.ready} caption="Evidence collected and drafted" />
+        <Kpi icon="wallet" tone="neutral" label="Value at risk" value={kpi.value} caption="Across actionable disputes" />
       </div>
 
-      {error && <Alert tone="danger">{error}</Alert>}
+      {error && (
+        <div style={{ marginBottom: 16 }}>
+          <Notice tone="danger" title="Could not load disputes">
+            {error}
+          </Notice>
+        </div>
+      )}
 
-      <div className="card">
-        <div className="toolbar" role="toolbar" aria-label="Queue filters">
-          {FILTERS.map((f) => (
-            <button key={f.key} className="chip" aria-pressed={filter === f.key} onClick={() => setFilter(f.key)}>
-              {f.label}
-              <span className="count">{(rows ?? []).filter(f.test).length}</span>
-            </button>
-          ))}
+      <div className="card" style={{ overflow: 'hidden' }}>
+        <div className="toolbar" role="toolbar" aria-label="Filter disputes">
+          <div className="segmented">
+            {FILTERS.map((f) => (
+              <button key={f.key} aria-pressed={filter === f.key} onClick={() => setFilter(f.key)}>
+                {f.label}
+                <span className="count">{(rows ?? []).filter(f.test).length}</span>
+              </button>
+            ))}
+          </div>
           <div className="grow" />
-          <label className="sr-only" htmlFor="quick">Search disputes</label>
-          <input id="quick" type="search" placeholder="Search id, reason, status…" value={quick} onChange={(e) => setQuick(e.target.value)} style={{ width: 260 }} />
+          <label className="sr-only" htmlFor="quick">
+            Search disputes
+          </label>
+          <div className="search">
+            <Icon name="search" size={15} />
+            <input id="quick" type="search" placeholder="Search by ID, reason or status" value={quick} onChange={(e) => setQuick(e.target.value)} />
+          </div>
         </div>
         <div className="grid-wrap">
           <AgGridReact<QueueItem>
@@ -225,21 +296,17 @@ export function QueuePage() {
             getRowId={(p) => p.data.id}
             quickFilterText={quick}
             loading={rows === null}
-            overlayNoRowsTemplate="<span style='color:#5d6b82'>No disputes match this filter.</span>"
+            overlayNoRowsTemplate="<span style='color:#5f6b7d'>No disputes match this view.</span>"
             onRowClicked={(e: RowClickedEvent<QueueItem>) => e.data && open(e.data.id)}
             onCellKeyDown={(e: CellKeyDownEvent<QueueItem>) => {
               const ke = e.event as KeyboardEvent | undefined;
               if (ke?.key === 'Enter' && e.data) open(e.data.id);
             }}
-            rowStyle={{ cursor: 'pointer' }}
             tooltipShowDelay={300}
             animateRows
           />
         </div>
       </div>
-      <p className="muted small" style={{ marginTop: 10 }}>
-        Tip: use arrow keys to move through rows and Enter to open one.
-      </p>
     </>
   );
 }

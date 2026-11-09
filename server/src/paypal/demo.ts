@@ -52,7 +52,7 @@ export class DemoPayPal implements PayPalGateway {
   describe() {
     return {
       name: 'PayPal Disputes API',
-      detail: `demo mode — ${this.scenarios.length} fixture disputes, no outbound calls`,
+      detail: `Demo environment · ${this.scenarios.length} sample disputes · no outbound calls`,
     };
   }
 

@@ -1,49 +1,56 @@
-/** Dispute detail (PRD §11 screen 2): evidence, plan, draft, timeline, raw API. */
+/** Dispute detail (PRD §11 screen 2): evidence, strategy, draft, timeline and PayPal data. */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
   DISPUTE_ACTION_LABELS,
   FILE_LIMITS,
+  carrierDisplayName,
   shouldWarnSubmitNow,
   type DisputeAction,
   type EvidenceItemView,
+  type TimelineEntry,
 } from '@shared/index.js';
 import { api, ApiError, money, when, type ApproveResult, type Detail } from '../api';
 import { ApprovalModal } from '../ApprovalModal';
 import {
-  AiLabel,
-  Alert,
   BandBadge,
   Cited,
   CompletenessRing,
-  FixtureBadge,
+  EmptyState,
   GatherBadge,
+  Loading,
+  Notice,
+  SourceTag,
   StatusBadge,
   Toast,
   UrgencyBadge,
   WorkflowSteps,
+  humanize,
 } from '../components';
+import { Icon, type IconName } from '../icons';
 
 type Tab = 'evidence' | 'draft' | 'timeline' | 'raw';
 
-const SOURCE_BADGE: Record<string, [string, string]> = {
-  paypal: ['PayPal', 'blue'],
-  kernel: ['KERNEL capture', 'green'],
-  zapier: ['Zapier', 'amber'],
-  upload: ['Upload', 'grey'],
-  fixture: ['Fixture', 'outline'],
+const SOURCE: Record<string, { label: string; tone: string }> = {
+  paypal: { label: 'PayPal', tone: 'info' },
+  kernel: { label: 'Carrier capture', tone: 'success' },
+  zapier: { label: 'Zapier', tone: 'warning' },
+  upload: { label: 'Uploaded', tone: 'neutral' },
+  fixture: { label: 'Sample data', tone: 'outline' },
 };
 
-const KIND_LABEL: Record<string, string> = {
-  paypal_dispute: 'Dispute',
-  paypal_transaction: 'Transaction',
-  paypal_shipment_tracking: 'Shipment tracking',
-  carrier_capture: 'Carrier page',
-  order_record: 'Order record',
-  upload: 'Document',
-  buyer_message: 'Buyer message',
+const KIND: Record<string, { label: string; icon: IconName }> = {
+  paypal_dispute: { label: 'Dispute record', icon: 'scale' },
+  paypal_transaction: { label: 'Transaction', icon: 'receipt' },
+  paypal_shipment_tracking: { label: 'Shipment tracking', icon: 'truck' },
+  carrier_capture: { label: 'Carrier tracking page', icon: 'globe' },
+  order_record: { label: 'Order record', icon: 'clipboard' },
+  upload: { label: 'Document', icon: 'paperclip' },
+  buyer_message: { label: 'Buyer message', icon: 'message' },
 };
+
+const REQ_ICON: Record<string, IconName> = { yes: 'check', partial: 'minus', no: 'x' };
 
 export function DisputeDetailPage({ mode }: { mode: string }) {
   const { id = '' } = useParams();
@@ -51,18 +58,18 @@ export function DisputeDetailPage({ mode }: { mode: string }) {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('evidence');
   const [action, setAction] = useState<DisputeAction | null>(null);
-  const [toast, setToast] = useState<{ tone: 'ok' | 'danger' | 'info'; text: string } | null>(null);
+  const [toast, setToast] = useState<{ tone: 'ok' | 'danger' | 'info'; title: string; body: string } | null>(null);
 
   const load = useCallback(async () => {
     try {
       setD(await api.dispute(id));
       setError(null);
     } catch (e) {
-      setError(e instanceof ApiError && e.status === 404 ? 'Dispute not found.' : e instanceof Error ? e.message : 'Failed to load');
+      setError(e instanceof ApiError && e.status === 404 ? 'This dispute could not be found.' : e instanceof Error ? e.message : 'Failed to load');
     }
   }, [id]);
 
-  // Poll fast while the workflow runs so the steps animate live; slowly otherwise.
+  // Poll quickly while the workflow runs so steps update live; slowly otherwise.
   const live = d?.running || d?.gatherState === 'GATHERING';
   useEffect(() => {
     void load();
@@ -72,12 +79,41 @@ export function DisputeDetailPage({ mode }: { mode: string }) {
     return () => clearInterval(t);
   }, [load, live]);
 
-  if (error) return <><Link className="back" to="/">← Queue</Link><Alert tone="danger">{error}</Alert></>;
-  if (!d) return <div className="row muted"><span className="spinner" /> Loading dispute…</div>;
+  const crumbs = (
+    <nav className="breadcrumb" aria-label="Breadcrumb">
+      <Link to="/">Disputes</Link>
+      <Icon name="chevronRight" size={14} />
+      <span className="current">{id}</span>
+    </nav>
+  );
+
+  if (error) {
+    return (
+      <>
+        {crumbs}
+        <Notice tone="danger" title="Unable to open dispute">
+          {error}
+        </Notice>
+      </>
+    );
+  }
+  if (!d) {
+    return (
+      <>
+        {crumbs}
+        <Loading label="Loading dispute…" />
+      </>
+    );
+  }
 
   const plan = d.plan;
   const recommended = plan?.narrative.recommended_action ?? null;
   const ordered = [...d.allowedActions].sort((a, b) => (a === recommended ? -1 : b === recommended ? 1 : 0));
+  // The response deadline stops mattering once PayPal is reviewing or has decided.
+  const resolved = d.status === 'RESOLVED';
+  const withPayPal = d.status === 'UNDER_REVIEW';
+  const critical = !resolved && !withPayPal && (d.urgency.level === 'CRITICAL' || d.urgency.level === 'OVERDUE');
+  const outcome = (d.raw as { dispute_outcome?: { outcome_code?: string } } | null)?.dispute_outcome?.outcome_code ?? null;
 
   async function regather() {
     await api.refresh(id);
@@ -85,17 +121,29 @@ export function DisputeDetailPage({ mode }: { mode: string }) {
     void load();
   }
 
+  async function simulate(outcome: 'seller' | 'buyer') {
+    await api.simulateResolve(id, outcome);
+    setTab('timeline');
+    void load();
+  }
+
   function onDone(r: ApproveResult) {
     setAction(null);
+    const status = humanize(r.disputeStatus);
     setToast(
       r.ok
-        ? {
-            tone: 'ok',
-            text: r.simulated
-              ? `Recorded locally (demo — nothing sent to PayPal). PayPal status now: ${r.disputeStatus ?? 'unknown'}.`
-              : `Submitted to PayPal (HTTP ${r.httpStatus}). Status now: ${r.disputeStatus ?? 'unknown'}.`,
-          }
-        : { tone: 'danger', text: `PayPal did not accept it: ${r.error ?? 'unknown error'}${r.debugId ? ` (debug_id ${r.debugId})` : ''}` },
+        ? r.simulated
+          ? {
+              tone: 'ok',
+              title: 'Submission recorded',
+              body: `Demo environment: recorded locally, not transmitted to PayPal. PayPal status: ${status}.`,
+            }
+          : { tone: 'ok', title: 'Submitted to PayPal', body: `Accepted (HTTP ${r.httpStatus}). PayPal status: ${status}.` }
+        : {
+            tone: 'danger',
+            title: 'PayPal did not accept the request',
+            body: `${r.error ?? 'Unknown error'}${r.debugId ? ` · debug_id ${r.debugId}` : ''}`,
+          },
     );
     setTab('timeline');
     void load();
@@ -103,154 +151,267 @@ export function DisputeDetailPage({ mode }: { mode: string }) {
 
   return (
     <>
-      <Link className="back" to="/">← Queue</Link>
+      {crumbs}
 
-      {/* --------------------------------------------------------- header */}
-      <div className="card detail-head">
+      {/* --------------------------------------------------------------- hero */}
+      <section className="card hero" aria-labelledby="dispute-title">
         <div>
-          <div className="title">
-            <h1>{d.reasonLabel}</h1>
+          <div className="hero-title">
+            <h1 id="dispute-title">{d.reasonLabel}</h1>
             <StatusBadge status={d.status} />
-            {d.stage && <span className="badge outline">{d.stage.replace(/_/g, ' ').toLowerCase()} stage</span>}
             <GatherBadge state={d.gatherState} />
-            {d.fixture && <FixtureBadge />}
           </div>
-          <div className="facts">
-            <div className="fact"><div className="k">Disputed</div><div className="v">{money(d.amountValue, d.amountCurrency)}</div></div>
-            <div className="fact"><div className="k">Dispute ID</div><div className="v mono" style={{ fontSize: 13.5 }}>{d.id}</div></div>
-            <div className="fact"><div className="k">Opened</div><div className="v">{when(d.createdAt)}</div></div>
-            <div className="fact"><div className="k">Respond by</div><div className="v">{when(d.sellerResponseDueDate)}</div></div>
+          <div className="meta-grid">
+            <div>
+              <div className="meta-label">Disputed amount</div>
+              <div className="meta-value">{money(d.amountValue, d.amountCurrency)}</div>
+            </div>
+            <div>
+              <div className="meta-label">Dispute ID</div>
+              <div className="meta-value mono" style={{ fontSize: 13.5 }}>
+                {d.id}
+              </div>
+            </div>
+            <div>
+              <div className="meta-label">Stage</div>
+              <div className="meta-value">{humanize(d.stage)}</div>
+            </div>
+            <div>
+              <div className="meta-label">Opened</div>
+              <div className="meta-value">{when(d.createdAt)}</div>
+            </div>
+            <div>
+              <div className="meta-label">Respond by</div>
+              <div className="meta-value">{when(d.sellerResponseDueDate)}</div>
+            </div>
+            <div>
+              <div className="meta-label">Data source</div>
+              <div className="meta-value">{d.fixture ? 'Sample dataset' : 'PayPal'}</div>
+            </div>
           </div>
         </div>
-        <div className="due-box">
-          <div className="muted small" style={{ fontWeight: 600 }}>Time to respond</div>
-          <div className="big" style={{ color: ['CRITICAL', 'OVERDUE'].includes(d.urgency.level) ? 'var(--red)' : undefined }}>{d.dueIn}</div>
-          <UrgencyBadge urgency={d.urgency} />
-        </div>
-      </div>
+        {resolved ? (
+          <div className="deadline">
+            <span className="label">Outcome</span>
+            <span className="value">Resolved</span>
+            {outcome && (
+              <span className={`badge tone-${/SELLER/.test(outcome) ? 'success' : /BUYER/.test(outcome) ? 'danger' : 'neutral'}`}>
+                {humanize(outcome.replace(/^RESOLVED_/, ''))}
+              </span>
+            )}
+          </div>
+        ) : withPayPal ? (
+          <div className="deadline">
+            <span className="label">Status</span>
+            <span className="value">With PayPal</span>
+            <span className="badge tone-info">
+              <Icon name="clock" />
+              Awaiting decision
+            </span>
+          </div>
+        ) : (
+          <div className={`deadline ${critical ? 'critical' : ''}`}>
+            <span className="label">Time remaining</span>
+            <span className="value">{d.dueIn}</span>
+            <UrgencyBadge urgency={d.urgency} />
+          </div>
+        )}
+      </section>
 
-      <div className="stack" style={{ marginTop: 14, gap: 8 }}>
-        {shouldWarnSubmitNow(d.sellerResponseDueDate) && <Alert tone="danger"><strong>Under 2 hours left.</strong> Submit now — a late response cannot be considered.</Alert>}
-        {d.guidance.map((g) => <Alert key={g} tone="warn">{g}</Alert>)}
+      <div className="notices">
+        {!resolved && !withPayPal && shouldWarnSubmitNow(d.sellerResponseDueDate) && (
+          <Notice tone="danger" title="Less than 2 hours remaining">
+            Submit now. A response received after the deadline cannot be considered.
+          </Notice>
+        )}
+        {d.guidance.map((g) => (
+          <Notice key={g} tone="warn">
+            {g}
+          </Notice>
+        ))}
         {d.gatherState === 'NEEDS_MANUAL_REVIEW' && d.supported && (
-          <Alert tone="warn">
-            Extraction confidence was too low to draft a response safely ({plan?.facts.confidence.toFixed(2) ?? '—'}). Review the evidence, upload proof of shipment or delivery, or use the recommended action.
-          </Alert>
+          <Notice tone="warn" title="Manual review required">
+            Extraction confidence ({plan?.facts.confidence.toFixed(2) ?? '—'}) was too low to draft a response safely. Review the
+            evidence, add proof of shipment or delivery, or take the recommended action.
+          </Notice>
         )}
       </div>
 
       <div className="layout">
-        {/* ------------------------------------------------- left column */}
+        {/* ----------------------------------------------------- left column */}
         <div className="stack">
-          <div className="card">
-            <div className="card-h"><h2>Evidence completeness</h2>{plan && <BandBadge band={plan.band} />}</div>
-            <div className="card-b">
+          <section className="card" aria-labelledby="strength-h">
+            <div className="card-header">
+              <div>
+                <h2 id="strength-h" className="card-title">
+                  Evidence strength
+                </h2>
+                <div className="card-subtitle">Scored against a fixed rubric</div>
+              </div>
+              {plan && <BandBadge band={plan.band} />}
+            </div>
+            <div className="card-body">
               {!plan ? (
-                <div className="empty small">{d.supported ? 'Not scored yet.' : 'Not scored — this dispute reason is not supported in this version.'}</div>
+                <EmptyState icon="scale" title={d.supported ? 'Not scored yet' : 'Manual handling'}>
+                  {d.supported ? 'The score appears once evidence collection finishes.' : 'This dispute reason is not scored automatically.'}
+                </EmptyState>
               ) : (
                 <>
-                  <div className="meter">
+                  <div className="score-head">
                     <CompletenessRing score={plan.completeness} band={plan.band} />
                     <div className="small">
-                      <div style={{ fontWeight: 600 }}>Scored by a fixed rubric, not by the AI.</div>
-                      <div className="muted">Each requirement is weighted; partial evidence earns 40%.{plan.capped && <> Capped at {plan.completeness} (raw {plan.rawCompleteness}) because evidence contradicts delivery.</>}</div>
+                      <div className="strong">Deterministic, not AI-judged</div>
+                      <div className="muted" style={{ marginTop: 2 }}>
+                        Each requirement is weighted; partially met requirements earn 40% of their points.
+                      </div>
+                      {plan.capped && (
+                        <div style={{ marginTop: 6, color: 'var(--warning)', fontWeight: 600 }}>
+                          Capped at {plan.completeness} (uncapped {plan.rawCompleteness}): some evidence contradicts delivery.
+                        </div>
+                      )}
                     </div>
                   </div>
                   <ul className="reqs">
                     {plan.requirements.map((r) => (
                       <li className="req" key={r.id} title={r.why}>
-                        <span className={`mark ${r.satisfied}`} aria-label={r.satisfied}>{r.satisfied === 'yes' ? '✓' : r.satisfied === 'partial' ? '½' : '✕'}</span>
+                        <span
+                          className={`req-icon ${r.satisfied}`}
+                          aria-label={r.satisfied === 'yes' ? 'met' : r.satisfied === 'partial' ? 'partially met' : 'not met'}
+                        >
+                          <Icon name={REQ_ICON[r.satisfied]!} />
+                        </span>
                         <div>
-                          <div style={{ fontWeight: 600 }}>{r.label}{r.critical && <span className="muted tiny"> · critical</span>}</div>
-                          <div className="detail">{r.detail}</div>
+                          <div className="req-title">
+                            {r.label}
+                            {r.critical && <span className="chip-critical">Critical</span>}
+                          </div>
+                          <div className="req-detail">{r.detail}</div>
                         </div>
-                        <span className="pts">{r.earned}/{r.weight}</span>
+                        <span className="req-pts">
+                          {r.earned}/{r.weight}
+                        </span>
                       </li>
                     ))}
                   </ul>
                 </>
               )}
             </div>
-          </div>
+          </section>
 
-          <div className="card">
-            <div className="card-h">
-              <h2>Evidence workflow</h2>
-              <button className="btn sm" onClick={() => void regather()} disabled={live}>
-                {live ? <span className="spinner" /> : '↻'} {live ? 'Running' : 'Re-gather'}
+          <section className="card" aria-labelledby="collect-h">
+            <div className="card-header">
+              <div>
+                <h2 id="collect-h" className="card-title">
+                  Evidence collection
+                </h2>
+                <div className="card-subtitle">Each step is logged and retried on failure</div>
+              </div>
+              <button className="btn btn-sm" onClick={() => void regather()} disabled={live}>
+                {live ? <span className="spinner" style={{ width: 12, height: 12 }} /> : <Icon name="refresh" size={14} />}
+                {live ? 'Running' : 'Re-run'}
               </button>
             </div>
-            <div className="card-b"><WorkflowSteps steps={d.steps} /></div>
-          </div>
+            <div className="card-body" style={{ paddingTop: 8, paddingBottom: 8 }}>
+              <WorkflowSteps steps={d.steps} />
+            </div>
+          </section>
         </div>
 
-        {/* ------------------------------------------------ right column */}
+        {/* ---------------------------------------------------- right column */}
         <div className="stack">
-          <div className="card">
-            <div className="card-h">
+          <section className="card" aria-labelledby="actions-h">
+            <div className="card-header">
               <div>
-                <h2>Actions PayPal allows right now</h2>
-                <div className="muted small">Read from the dispute&apos;s HATEOAS links. Nothing else is offered.</div>
+                <h2 id="actions-h" className="card-title">
+                  Available actions
+                </h2>
+                <div className="card-subtitle">
+                  Offered by PayPal for this dispute&apos;s current stage. Every action requires your approval.
+                </div>
               </div>
             </div>
-            <div className="card-b stack" style={{ gap: 12 }}>
+            <div className="card-body stack" style={{ gap: 14 }}>
               {ordered.length === 0 ? (
-                <div className="muted">No actions are available on this dispute at the moment.</div>
+                <div className="muted small">PayPal is not offering any actions on this dispute at the moment.</div>
               ) : (
                 <div className="action-bar">
-                  {ordered.map((a) => (
-                    <button
-                      key={a}
-                      className={`btn ${a === recommended ? 'primary' : ''}`}
-                      onClick={() => setAction(a)}
-                      disabled={live || (a === 'provide-evidence' && !d.draft)}
-                      title={DISPUTE_ACTION_LABELS[a].consequence}
-                    >
-                      {DISPUTE_ACTION_LABELS[a].label}{a === recommended ? ' · recommended' : ''}
-                    </button>
-                  ))}
+                  {ordered.map((a) => {
+                    const isRec = a === recommended;
+                    return (
+                      <button
+                        key={a}
+                        className={`btn ${isRec ? 'btn-primary' : ''}`}
+                        data-recommended={isRec ? 'true' : undefined}
+                        onClick={() => setAction(a)}
+                        disabled={live || (a === 'provide-evidence' && !d.draft)}
+                        title={DISPUTE_ACTION_LABELS[a].consequence}
+                      >
+                        {DISPUTE_ACTION_LABELS[a].label}
+                        {isRec && <span className="tag">Recommended</span>}
+                      </button>
+                    );
+                  })}
                 </div>
               )}
-              {plan && (
-                <div className="small">
-                  <span className="muted">Why: </span>{plan.narrative.recommended_action_why}
+              {plan && ordered.length > 0 && (
+                <div className="recommendation">
+                  <Icon name="sparkles" />
+                  <div>
+                    <span className="strong">{recommended ? DISPUTE_ACTION_LABELS[recommended].label : 'Recommendation'}: </span>
+                    {plan.narrative.recommended_action_why}
+                  </div>
                 </div>
               )}
               {mode === 'demo' && d.status === 'UNDER_REVIEW' && (
-                <div className="row" style={{ borderTop: '1px dashed var(--line)', paddingTop: 12 }}>
-                  <span className="muted small grow">Demo: stand in for PayPal&apos;s decision to exercise the resolution webhook.</span>
-                  <button className="btn sm" onClick={async () => { await api.simulateResolve(id, 'seller'); setTab('timeline'); void load(); }}>Simulate: seller wins</button>
-                  <button className="btn sm" onClick={async () => { await api.simulateResolve(id, 'buyer'); setTab('timeline'); void load(); }}>Simulate: buyer wins</button>
+                <div className="demo-controls">
+                  <span className="label">
+                    <Icon name="scale" size={15} />
+                    Demo controls: simulate PayPal&apos;s decision
+                  </span>
+                  <div className="grow" />
+                  <button className="btn btn-sm" onClick={() => void simulate('seller')}>
+                    Seller wins
+                  </button>
+                  <button className="btn btn-sm" onClick={() => void simulate('buyer')}>
+                    Buyer wins
+                  </button>
                 </div>
               )}
             </div>
-          </div>
+          </section>
 
-          <div className="card">
-            <div className="tabs" role="tablist">
-              {([
-                ['evidence', 'Evidence', d.evidence.length],
-                ['draft', 'Plan & draft', null],
-                ['timeline', 'Timeline', d.timeline.length],
-                ['raw', 'Raw API', null],
-              ] as [Tab, string, number | null][]).map(([k, label, n]) => (
+          <section className="card">
+            <div className="tabs" role="tablist" aria-label="Dispute details">
+              {(
+                [
+                  ['evidence', 'Evidence', d.evidence.length],
+                  ['draft', 'Strategy & draft', null],
+                  ['timeline', 'Timeline', d.timeline.length],
+                  ['raw', 'PayPal data', null],
+                ] as [Tab, string, number | null][]
+              ).map(([k, label, n]) => (
                 <button key={k} role="tab" className="tab" aria-selected={tab === k} onClick={() => setTab(k)}>
-                  {label}{n !== null && <span className="n">{n}</span>}
+                  {label}
+                  {n !== null && <span className="count">{n}</span>}
                 </button>
               ))}
             </div>
-            <div className="card-b" role="tabpanel">
+            <div className="card-body" role="tabpanel">
               {tab === 'evidence' && <EvidenceTab d={d} onUploaded={() => void load()} />}
               {tab === 'draft' && <DraftTab d={d} />}
               {tab === 'timeline' && <TimelineTab d={d} />}
               {tab === 'raw' && <RawTab d={d} />}
             </div>
-          </div>
+          </section>
         </div>
       </div>
 
       {action && <ApprovalModal dispute={d} action={action} onClose={() => setAction(null)} onDone={onDone} />}
-      {toast && <Toast tone={toast.tone} onClose={() => setToast(null)}>{toast.text}</Toast>}
+      {toast && (
+        <Toast tone={toast.tone} title={toast.title} onClose={() => setToast(null)}>
+          {toast.body}
+        </Toast>
+      )}
     </>
   );
 }
@@ -265,20 +426,23 @@ function EvidenceTab({ d, onUploaded }: { d: Detail; onUploaded: () => void }) {
 
   async function upload() {
     const f = fileRef.current?.files?.[0];
-    if (!f) return;
+    if (!f) {
+      setMsg({ tone: 'danger', text: 'Choose a file to upload.' });
+      return;
+    }
     if (f.size > FILE_LIMITS.maxBytesPerFile) {
-      setMsg({ tone: 'danger', text: 'File is larger than 10 MB.' });
+      setMsg({ tone: 'danger', text: 'The file is larger than 10 MB.' });
       return;
     }
     setBusy(true);
     setMsg(null);
     try {
       const item = await api.upload(d.id, f, label);
-      setMsg({ tone: 'ok', text: `Added ${item.id}. Re-scoring…` });
+      setMsg({ tone: 'ok', text: `Added as ${item.id}. Re-scoring the evidence…` });
       if (fileRef.current) fileRef.current.value = '';
       onUploaded();
     } catch (e) {
-      setMsg({ tone: 'danger', text: e instanceof ApiError ? `${e.message}${e.detail ? ` — ${e.detail}` : ''}` : 'Upload failed' });
+      setMsg({ tone: 'danger', text: e instanceof ApiError ? `${e.message}${e.detail ? `: ${e.detail}` : ''}` : 'Upload failed' });
     } finally {
       setBusy(false);
     }
@@ -287,204 +451,356 @@ function EvidenceTab({ d, onUploaded }: { d: Detail; onUploaded: () => void }) {
   return (
     <div className="stack">
       {d.evidence.length === 0 ? (
-        <div className="empty">No evidence collected yet.</div>
+        <EmptyState icon="layers" title="No evidence collected yet">
+          Items appear here as the collection workflow runs.
+        </EmptyState>
       ) : (
         <div>
-          {d.evidence.map((e) => <EvidenceItem key={e.id} disputeId={d.id} e={e} />)}
+          {d.evidence.map((e) => (
+            <EvidenceItem key={e.id} disputeId={d.id} e={e} />
+          ))}
         </div>
       )}
-      <div className="card card-b" style={{ background: 'var(--surface-2)' }}>
-        <h3 style={{ marginBottom: 8 }}>Add a document</h3>
-        <div className="row">
-          <label className="field">
+
+      <div className="dropzone">
+        <div className="row" style={{ marginBottom: 12 }}>
+          <Icon name="upload" size={16} />
+          <div className="grow">
+            <div className="strong">Add supporting document</div>
+            <div className="muted xs">PDF, JPEG, PNG, GIF or TIFF · up to 10 MB</div>
+          </div>
+        </div>
+        <div className="row top wrap">
+          <label className="field" style={{ width: 220 }}>
             Label
             <input type="text" value={label} maxLength={120} onChange={(e) => setLabel(e.target.value)} />
           </label>
           <label className="field grow">
-            File (PDF, JPEG, PNG, GIF, TIFF · max 10 MB)
-            <input ref={fileRef} type="file" accept={FILE_LIMITS.allowedExtensions.join(',')} />
+            File
+            <input ref={fileRef} type="file" accept={FILE_LIMITS.allowedExtensions.join(',')} style={{ fontSize: 13, paddingTop: 6 }} />
           </label>
           <button className="btn" style={{ alignSelf: 'flex-end' }} onClick={() => void upload()} disabled={busy}>
-            {busy ? <span className="spinner" /> : null} Upload
+            {busy ? <span className="spinner" /> : <Icon name="upload" size={15} />}
+            Upload
           </button>
         </div>
-        {msg && <div style={{ marginTop: 10 }}><Alert tone={msg.tone}>{msg.text}</Alert></div>}
-        <div className="muted tiny" style={{ marginTop: 8 }}>Files are checked by content (not just extension), stored under a random name, and attached to the PayPal submission only after you approve it.</div>
+        {msg && (
+          <div style={{ marginTop: 12 }}>
+            <Notice tone={msg.tone}>{msg.text}</Notice>
+          </div>
+        )}
+        <div className="muted xs" style={{ marginTop: 10 }}>
+          Files are verified by content, stored under a random name, and attached to a PayPal submission only after you approve it.
+        </div>
       </div>
     </div>
   );
 }
 
 function EvidenceItem({ disputeId, e }: { disputeId: string; e: EvidenceItemView }) {
-  const [label, tone] = SOURCE_BADGE[e.source] ?? [e.source, 'grey'];
+  const src = SOURCE[e.source] ?? { label: humanize(e.source), tone: 'neutral' };
+  const kind = KIND[e.kind] ?? { label: humanize(e.kind), icon: 'fileText' as IconName };
   return (
-    <div className="ev">
-      <div className="ev-h">
+    <article className="ev">
+      <header className="ev-head">
+        <span className="ev-icon">
+          <Icon name={kind.icon} size={15} />
+        </span>
         <span className="ev-id">{e.id}</span>
-        <span style={{ fontWeight: 600 }} className="grow">{e.label}</span>
-        <span className="badge outline">{KIND_LABEL[e.kind] ?? e.kind}</span>
-        <span className={`badge ${tone}`}>{label}</span>
-      </div>
+        <div className="grow" style={{ minWidth: 160 }}>
+          <div className="ev-title truncate">{e.label}</div>
+          <div className="muted xs">{kind.label}</div>
+        </div>
+        <span className={`badge tone-${src.tone}`}>{src.label}</span>
+      </header>
       {e.contentText ? <pre>{e.contentText}</pre> : null}
       {e.filePath && (
-        <div style={{ padding: '8px 12px' }}>
-          <a href={`/api/disputes/${encodeURIComponent(disputeId)}/evidence/${e.id}/file`} target="_blank" rel="noreferrer">
+        <div className="ev-file">
+          <a className="btn btn-sm" href={`/api/disputes/${encodeURIComponent(disputeId)}/evidence/${e.id}/file`} target="_blank" rel="noreferrer">
+            <Icon name="externalLink" size={13} />
             Open {e.mimeType === 'application/pdf' ? 'PDF' : 'image'} ({((e.bytes ?? 0) / 1024).toFixed(1)} KB)
           </a>
         </div>
       )}
-      <div className="ev-meta">
-        {e.sourceRef ? <>source: {e.sourceRef} · </> : null}captured {when(e.capturedAt)} · sha256 {e.sha256.slice(0, 16)}…
-      </div>
-    </div>
+      <footer className="ev-foot">
+        {e.sourceRef && (
+          <span title={e.sourceRef}>
+            <Icon name="externalLink" size={12} />
+            <span className="truncate" style={{ maxWidth: 360 }}>
+              {e.sourceRef}
+            </span>
+          </span>
+        )}
+        <span>
+          <Icon name="clock" size={12} />
+          {when(e.capturedAt)}
+        </span>
+        <span title={`SHA-256 ${e.sha256}`}>
+          <Icon name="hash" size={12} />
+          <code>{e.sha256.slice(0, 16)}</code>
+        </span>
+      </footer>
+    </article>
   );
 }
 
 function DraftTab({ d }: { d: Detail }) {
   const plan = d.plan;
   if (!plan && !d.draft) {
-    return <div className="empty">{d.supported ? 'No plan yet — the evidence workflow has not finished.' : 'No plan: this dispute reason is handled manually in this version.'}</div>;
+    return (
+      <EmptyState icon="fileText" title={d.supported ? 'No strategy yet' : 'Manual handling'}>
+        {d.supported
+          ? 'The strategy and draft appear once evidence collection finishes.'
+          : 'This dispute reason is handled manually in this version.'}
+      </EmptyState>
+    );
   }
   return (
-    <div className="stack">
+    <div className="stack" style={{ gap: 24 }}>
       {d.draft ? (
-        <div>
-          <div className="row" style={{ marginBottom: 8 }}>
-            <h3 className="grow">Draft response</h3>
-            <AiLabel generator={d.draft.generator} model={d.draft.model} />
+        <section>
+          <div className="row" style={{ marginBottom: 10 }}>
+            <h3 className="grow" style={{ fontSize: 14 }}>
+              Response draft
+            </h3>
+            <SourceTag generator={d.draft.generator} model={d.draft.model} />
           </div>
-          <div className="card card-b" style={{ whiteSpace: 'pre-wrap' }}>
+          <div className="draft-text">
             <Cited text={d.draft.editedText ?? d.draft.text} />
           </div>
-          <div className="row small" style={{ marginTop: 8 }}>
-            <span className="muted">Relies on:</span>
-            {d.draft.evidenceRefs.map((r) => <span key={r} className="cite">{r}</span>)}
-            {d.draft.editedText && <span className="badge grey">edited by you</span>}
+          <div className="row wrap small" style={{ marginTop: 10 }}>
+            <span className="muted">Cites</span>
+            {d.draft.evidenceRefs.map((r) => (
+              <span key={r} className="cite">
+                {r}
+              </span>
+            ))}
+            {d.draft.editedText && <span className="badge tone-neutral">Edited</span>}
+            <span className="grow" />
+            <span className="muted xs">Every citation is verified against stored evidence. Edit the text when you approve.</span>
           </div>
-          <div className="muted tiny" style={{ marginTop: 4 }}>Every cited id is checked against the stored evidence before the draft is accepted. Edit the text in the approval step.</div>
-        </div>
+        </section>
       ) : (
-        <Alert tone="warn">No draft was written for this dispute — see the workflow panel for why.</Alert>
+        <Notice tone="warn" title="No draft written">
+          See the evidence collection panel for the reason.
+        </Notice>
       )}
 
       {plan && (
         <>
-          <div>
-            <div className="row" style={{ marginBottom: 6 }}>
-              <h3 className="grow">What the evidence supports</h3>
-              <AiLabel generator={plan.generator} model={plan.model} />
+          <section>
+            <div className="row" style={{ marginBottom: 10 }}>
+              <h3 className="grow" style={{ fontSize: 14 }}>
+                Supporting points
+              </h3>
+              <SourceTag generator={plan.generator} model={plan.model} />
             </div>
             <ul className="claims">
               {plan.narrative.rationale.map((r, i) => (
-                <li key={i}>{r.claim} {r.evidence_ids.map((id) => <span key={id} className="cite">{id}</span>)}</li>
+                <li key={i}>
+                  <Icon name="checkCircle" size={15} style={{ color: 'var(--success)' }} />
+                  <span>
+                    {r.claim}{' '}
+                    {r.evidence_ids.map((id) => (
+                      <span key={id} className="cite">
+                        {id}
+                      </span>
+                    ))}
+                  </span>
+                </li>
               ))}
             </ul>
-          </div>
+          </section>
+
           {plan.narrative.risks.length > 0 && (
-            <div>
-              <h3 style={{ marginBottom: 6 }}>Weaknesses a reviewer will notice</h3>
-              <ul className="claims">{plan.narrative.risks.map((r, i) => <li key={i}>{r}</li>)}</ul>
-            </div>
-          )}
-          <div>
-            <h3 style={{ marginBottom: 6 }}>Extracted facts</h3>
-            <table className="plain">
-              <tbody>
-                {([
-                  ['Carrier', plan.facts.carrierEnum ?? plan.facts.carrier, 'carrier'],
-                  ['Tracking number', plan.facts.trackingNumber, 'tracking_number'],
-                  ['Delivery status', plan.facts.deliveryStatus, 'delivery_status'],
-                  ['Delivered at', plan.facts.deliveredAt, 'delivered_at'],
-                  ['Signature', plan.facts.signatureObtained === null ? null : plan.facts.signatureObtained ? 'Yes' : 'No', 'signature_obtained'],
-                  ['Address match', plan.facts.addressMatch, 'address_match'],
-                ] as [string, string | null, string][]).map(([k, v, f]) => (
-                  <tr key={k}>
-                    <th style={{ width: 160 }}>{k}</th>
-                    <td>{v ?? <span className="muted">unknown</span>}</td>
-                    <td style={{ width: 70 }}>{plan.facts.sources[f] && <span className="cite">{plan.facts.sources[f]}</span>}</td>
-                  </tr>
+            <section>
+              <h3 style={{ fontSize: 14, marginBottom: 10 }}>Risks a reviewer may raise</h3>
+              <ul className="claims">
+                {plan.narrative.risks.map((r, i) => (
+                  <li key={i}>
+                    <Icon name="alertTriangle" size={15} style={{ color: 'var(--warning)' }} />
+                    <span>{r}</span>
+                  </li>
                 ))}
-                <tr><th>Confidence</th><td>{plan.facts.confidence.toFixed(2)}</td><td /></tr>
-              </tbody>
-            </table>
-          </div>
-          <div>
-            <h3 style={{ marginBottom: 6 }}>Policy notes used for grounding</h3>
+              </ul>
+            </section>
+          )}
+
+          <section>
+            <h3 style={{ fontSize: 14, marginBottom: 10 }}>Extracted facts</h3>
+            <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
+              <table className="table">
+                <tbody>
+                  {(
+                    [
+                      ['Carrier', plan.facts.carrier ?? (plan.facts.carrierEnum ? carrierDisplayName(plan.facts.carrierEnum) : null), 'carrier'],
+                      ['Tracking number', plan.facts.trackingNumber, 'tracking_number'],
+                      ['Delivery status', plan.facts.deliveryStatus === 'UNKNOWN' ? null : humanize(plan.facts.deliveryStatus), 'delivery_status'],
+                      ['Delivered at', plan.facts.deliveredAt, 'delivered_at'],
+                      ['Signature', plan.facts.signatureObtained === null ? null : plan.facts.signatureObtained ? 'Yes' : 'No', 'signature_obtained'],
+                      ['Address match', plan.facts.addressMatch === 'UNKNOWN' ? null : humanize(plan.facts.addressMatch), 'address_match'],
+                    ] as [string, string | null, string][]
+                  ).map(([k, v, f]) => (
+                    <tr key={k}>
+                      <td className="key">{k}</td>
+                      <td>{v ?? <span className="subtle">Not established</span>}</td>
+                      <td style={{ width: 80, textAlign: 'right' }}>{plan.facts.sources[f] && <span className="cite">{plan.facts.sources[f]}</span>}</td>
+                    </tr>
+                  ))}
+                  <tr>
+                    <td className="key">Extraction confidence</td>
+                    <td className="num">{plan.facts.confidence.toFixed(2)}</td>
+                    <td />
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section>
+            <h3 style={{ fontSize: 14, marginBottom: 4 }}>Policy references</h3>
+            <p className="muted xs" style={{ marginBottom: 10 }}>
+              Summaries of PayPal developer documentation used to ground the strategy. Not PayPal policy text.
+            </p>
             {plan.citations.length === 0 ? (
-              <div className="muted small">None retrieved.</div>
+              <div className="muted small">No references retrieved.</div>
             ) : (
               plan.citations.map((c) => (
                 <div className="citation" key={c.id}>
-                  <div className="row small"><span className="cite">{c.id}</span><strong className="grow">{c.title}</strong></div>
-                  <div className="small" style={{ marginTop: 4 }}>{c.snippet}</div>
-                  <a className="tiny" href={c.url} target="_blank" rel="noreferrer">{c.url}</a>
+                  <div className="row small">
+                    <span className="cite">{c.id}</span>
+                    <strong className="grow">{c.title}</strong>
+                  </div>
+                  <div className="small muted" style={{ marginTop: 5 }}>
+                    {c.snippet}
+                  </div>
+                  <a className="xs" style={{ marginTop: 6, gap: 5, display: 'inline-flex', alignItems: 'center' }} href={c.url} target="_blank" rel="noreferrer">
+                    <Icon name="externalLink" size={12} />
+                    {c.url.replace(/^https?:\/\//, '')}
+                  </a>
                 </div>
               ))
             )}
-            <div className="muted tiny" style={{ marginTop: 6 }}>Our paraphrased notes on PayPal&apos;s developer documentation — not PayPal policy text.</div>
-          </div>
+          </section>
         </>
       )}
     </div>
   );
 }
 
+const TL: Record<TimelineEntry['kind'], { icon: IconName; tone: string }> = {
+  dispute: { icon: 'activity', tone: 'info' },
+  workflow: { icon: 'layers', tone: 'neutral' },
+  ai: { icon: 'sparkles', tone: 'violet' },
+  approval: { icon: 'shieldCheck', tone: 'success' },
+  submission: { icon: 'fileCheck', tone: 'info' },
+  webhook: { icon: 'message', tone: 'info' },
+  note: { icon: 'paperclip', tone: 'neutral' },
+};
+
 function TimelineTab({ d }: { d: Detail }) {
-  if (d.timeline.length === 0) return <div className="empty">Nothing has happened yet.</div>;
+  if (d.timeline.length === 0) {
+    return <EmptyState icon="clock" title="No activity yet" />;
+  }
   return (
     <ol className="timeline">
-      {d.timeline.map((t) => (
-        <li key={t.id}>
-          <div>
-            <div className="tl-kind">{t.kind}</div>
-            <div className="tiny muted">{when(t.at)}</div>
-          </div>
-          <div>
-            <div style={{ fontWeight: 600 }}>{t.title}</div>
-            {t.detail && <div className="muted small">{t.detail}</div>}
-          </div>
-        </li>
-      ))}
+      {d.timeline.map((t) => {
+        const k = TL[t.kind] ?? TL.note;
+        return (
+          <li className="tl-item" key={t.id}>
+            <span className={`tl-dot tone-${k.tone}`}>
+              <Icon name={k.icon} />
+            </span>
+            <div style={{ minWidth: 0 }}>
+              <div className="tl-title">{t.title}</div>
+              {t.detail && <div className="tl-detail">{t.detail}</div>}
+            </div>
+            <span className="tl-time">{when(t.at)}</span>
+          </li>
+        );
+      })}
     </ol>
   );
 }
 
 function RawTab({ d }: { d: Detail }) {
   return (
-    <div className="stack">
-      <div>
-        <h3 style={{ marginBottom: 6 }}>HATEOAS links</h3>
-        <table className="plain">
-          <thead><tr><th>rel</th><th>method</th><th>href</th></tr></thead>
-          <tbody>
-            {d.links.map((l) => (
-              <tr key={l.rel}><td className="mono">{l.rel}</td><td className="mono">{l.method ?? ''}</td><td className="mono tiny">{l.href}</td></tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <div>
-        <h3 style={{ marginBottom: 6 }}>GET /v1/customer/disputes/{d.id}</h3>
-        <pre className="code">{JSON.stringify(d.raw, null, 2)}</pre>
-      </div>
-      {d.submissions.length > 0 && (
-        <div>
-          <h3 style={{ marginBottom: 6 }}>Approvals</h3>
-          <table className="plain">
-            <thead><tr><th>When</th><th>Action</th><th>Result</th><th>Payload hash</th><th>debug_id</th></tr></thead>
+    <div className="stack" style={{ gap: 22 }}>
+      <section>
+        <h3 style={{ fontSize: 14, marginBottom: 4 }}>Actions offered by PayPal</h3>
+        <p className="muted xs" style={{ marginBottom: 10 }}>
+          HATEOAS links from the dispute record. DisputeDesk only offers actions listed here.
+        </p>
+        <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Relation</th>
+                <th>Method</th>
+                <th>Endpoint</th>
+              </tr>
+            </thead>
             <tbody>
-              {d.submissions.map((s) => (
-                <tr key={s.id}>
-                  <td>{when(s.approvedAt)}</td>
-                  <td className="mono">{s.action}</td>
-                  <td><span className={`badge ${s.resultStatus === 'SENT' ? 'green' : s.resultStatus === 'FAILED' ? 'red' : 'grey'}`}>{s.resultStatus}</span>{s.httpStatus ? ` ${s.httpStatus}` : ''}</td>
-                  <td className="mono tiny">{s.payloadSha256.slice(0, 16)}…</td>
-                  <td className="mono tiny">{s.debugId ?? '—'}</td>
+              {d.links.map((l) => (
+                <tr key={l.rel}>
+                  <td>
+                    <span className="code-pill">{l.rel}</span>
+                  </td>
+                  <td className="mono xs">{l.method ?? ''}</td>
+                  <td className="mono xs" style={{ wordBreak: 'break-all' }}>
+                    {l.href}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+      </section>
+
+      <section>
+        <h3 style={{ fontSize: 14, marginBottom: 10 }}>Dispute record</h3>
+        <div className="code-block">
+          <div className="code-header">
+            <span>GET /v1/customer/disputes/{d.id}</span>
+            <span>JSON</span>
+          </div>
+          <pre>{JSON.stringify(d.raw, null, 2)}</pre>
+        </div>
+      </section>
+
+      {d.submissions.length > 0 && (
+        <section>
+          <h3 style={{ fontSize: 14, marginBottom: 10 }}>Approval history</h3>
+          <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Approved</th>
+                  <th>Action</th>
+                  <th>Result</th>
+                  <th>Payload fingerprint</th>
+                  <th>debug_id</th>
+                </tr>
+              </thead>
+              <tbody>
+                {d.submissions.map((s) => (
+                  <tr key={s.id}>
+                    <td className="nowrap">{when(s.approvedAt)}</td>
+                    <td>{DISPUTE_ACTION_LABELS[s.action]?.label ?? s.action}</td>
+                    <td>
+                      <span className={`badge tone-${s.resultStatus === 'SENT' ? 'success' : s.resultStatus === 'FAILED' ? 'danger' : 'neutral'}`}>
+                        {humanize(s.resultStatus)}
+                      </span>
+                      {s.httpStatus ? <span className="muted xs"> · HTTP {s.httpStatus}</span> : null}
+                    </td>
+                    <td className="mono xs">{s.payloadSha256.slice(0, 16)}…</td>
+                    <td className="mono xs">{s.debugId ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
       )}
     </div>
   );

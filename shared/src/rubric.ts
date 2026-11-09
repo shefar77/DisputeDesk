@@ -105,6 +105,24 @@ export interface Rubric {
 
 const PARTIAL_CREDIT = 0.4;
 
+/** PayPal carrier_name enum value -> the carrier's own name, for display. */
+const CARRIER_DISPLAY: Record<string, string> = {
+  UPS: 'UPS',
+  USPS: 'USPS',
+  DHL: 'DHL',
+  TNT: 'TNT',
+  FEDEX: 'FedEx',
+  ROYAL_MAIL: 'Royal Mail',
+  PARCELFORCE: 'Parcelforce',
+  CA_CANADA_POST: 'Canada Post',
+  CN_CHINA_POST: 'China Post',
+  HK_HONGKONG_POST: 'Hongkong Post',
+};
+
+export function carrierDisplayName(value: string): string {
+  return CARRIER_DISPLAY[value] ?? value.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 const INR_RUBRIC: Rubric = {
   reason: 'MERCHANDISE_OR_SERVICE_NOT_RECEIVED',
   requirements: [
@@ -129,10 +147,10 @@ const INR_RUBRIC: Rubric = {
       critical: true,
       evaluate: (f) => {
         if (f.carrierEnum && f.carrierEnum !== 'OTHER') {
-          return { satisfied: 'yes', detail: `Carrier ${f.carrierEnum}` };
+          return { satisfied: 'yes', detail: `Carrier: ${carrierDisplayName(f.carrierEnum)}` };
         }
         if (f.carrier) {
-          return { satisfied: 'partial', detail: `Carrier "${f.carrier}" maps to OTHER` };
+          return { satisfied: 'partial', detail: `Carrier "${f.carrier}" is not in PayPal's carrier list (submitted as OTHER)` };
         }
         return { satisfied: 'no', detail: 'Carrier unknown' };
       },

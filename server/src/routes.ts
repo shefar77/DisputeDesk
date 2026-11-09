@@ -77,7 +77,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
           name: 'KERNEL carrier capture',
           status: getDemoGateway() ? 'disabled' : kernelConfigured() ? 'ok' : 'disabled',
           detail: getDemoGateway()
-            ? 'Demo mode uses fixture carrier pages'
+            ? 'Demo environment uses sample carrier pages'
             : kernelConfigured()
               ? 'Cloud browser enabled'
               : 'KERNEL_API_KEY not set',
@@ -97,7 +97,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
             : 'PAYPAL_WEBHOOK_ID not set — relying on polling',
           fallback: `Polling every ${env.paypal.pollIntervalMinutes} min`,
         },
-        { name: 'Zapier order records', status: 'disabled', detail: 'Not implemented in this build (P1)', fallback: 'Fixture or upload' },
+        { name: 'Zapier order records', status: 'disabled', detail: 'Planned · not included in this build', fallback: 'Sample data or merchant upload' },
       ],
       llm: { provider: llm.name, model: llm.model, spentUsd: budget.spentUsd, capUsd: budget.capUsd, enabled: llm.enabled },
       lastPoll: lastPollStatus(),

@@ -84,7 +84,13 @@ export async function handleWebhook(
       await refreshFromPayPal(disputeId);
     }
     const label = verification.verified ? 'verified' : opts.simulated ? 'demo simulation, unverified' : 'unverified (demo mode)';
-    await addTimeline(disputeId, 'webhook', `Webhook ${event.event_type}`, `Signature ${label}; dispute re-read from PayPal.`);
+    const what = event.event_type.split('.').pop()?.toLowerCase() ?? 'updated';
+    await addTimeline(
+      disputeId,
+      'webhook',
+      `PayPal notification: dispute ${what}`,
+      `${event.event_type} · signature ${label} · dispute re-read from PayPal`,
+    );
     await audit('webhook.processed', { eventId: event.id, type: event.event_type, verified: verification.verified }, { disputeId });
     await db.update(schema.webhookEvents).set({ processedAt: new Date() }).where(eq(schema.webhookEvents.eventId, event.id));
 

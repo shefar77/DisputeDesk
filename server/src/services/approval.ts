@@ -20,6 +20,7 @@ import { readFileSync } from 'node:fs';
 import { and, eq, isNull } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
 import {
+  DISPUTE_ACTION_LABELS,
   HIGH_CONSEQUENCE_ACTIONS,
   SUBMITTABLE_EVIDENCE_TYPES,
   canonicalize,
@@ -60,6 +61,18 @@ import {
   upsertDisputeFromRaw,
 } from './disputes.js';
 import { addTimeline, audit } from './records.js';
+
+/** Merchant-facing action name for timeline entries. */
+function actionLabel(action: string): string {
+  return DISPUTE_ACTION_LABELS[action as DisputeAction]?.label ?? action;
+}
+
+/** "UNDER_REVIEW" -> "Under review". */
+function statusLabel(status: string | null | undefined): string {
+  if (!status) return 'Unknown';
+  const s = status.replace(/_/g, ' ').toLowerCase();
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
 
 export class ApprovalError extends Error {
   constructor(
@@ -123,7 +136,7 @@ export async function buildOutbound(disputeId: string, req: PreviewRequest): Pro
   const warnings: string[] = [];
 
   if (draft?.generator === 'deterministic') {
-    warnings.push('This text came from the rule-based template, not the AI. Read it carefully.');
+    warnings.push('Drafted from the standard template because AI drafting is not configured. Review the wording before approving.');
   }
 
   switch (req.action) {
@@ -204,7 +217,7 @@ export async function preview(disputeId: string, req: PreviewRequest): Promise<P
   const built = await buildOutbound(disputeId, req);
   const canonical = canonicalize(built.request);
   const payloadSha256 = hashOutbound(canonical);
-  if (env.isDemo) built.warnings.unshift('Demo mode: approving records this request locally. Nothing is sent to PayPal.');
+  if (env.isDemo) built.warnings.unshift('Demo environment: approving records this request locally. It is not transmitted to PayPal.');
   await audit('approval.previewed', { action: req.action, payloadSha256 }, { disputeId, actor: env.operator });
   return {
     action: req.action,
@@ -294,7 +307,7 @@ export async function approveAndSubmit(
     resultStatus: 'PENDING',
   });
   await audit('approval.granted', { approvalId, action: req.action, payloadSha256: hash }, { disputeId, actor: approvedBy });
-  await addTimeline(disputeId, 'approval', `Approved: ${req.action}`, `${approvedBy} approved payload ${shortHash(hash)}`);
+  await addTimeline(disputeId, 'approval', `Approved: ${actionLabel(req.action)}`, `Approved by ${approvedBy} · fingerprint ${shortHash(hash)}`);
 
   return submitApproved(approvalId, built);
 }
@@ -364,7 +377,7 @@ export async function submitApproved(approvalId: string, built: Built): Promise<
   );
 
   if (!result.ok) {
-    await addTimeline(disputeId, 'submission', `PayPal rejected ${approval.action} (HTTP ${result.httpStatus})`, `${result.error ?? ''}${result.debugId ? ` · debug_id ${result.debugId}` : ''}`);
+    await addTimeline(disputeId, 'submission', `PayPal declined: ${actionLabel(approval.action)} (HTTP ${result.httpStatus})`, `${result.error ?? ''}${result.debugId ? ` · debug_id ${result.debugId}` : ''}`);
     return {
       approvalId,
       ok: false,
@@ -379,8 +392,12 @@ export async function submitApproved(approvalId: string, built: Built): Promise<
   await addTimeline(
     disputeId,
     'submission',
-    result.simulated ? `Recorded ${approval.action} (demo — not sent to PayPal)` : `Submitted ${approval.action} to PayPal`,
-    `HTTP ${result.httpStatus}${result.debugId ? ` · debug_id ${result.debugId}` : ''}`,
+    result.simulated
+      ? `${actionLabel(approval.action)} recorded (demo environment)`
+      : `${actionLabel(approval.action)} submitted to PayPal`,
+    result.simulated
+      ? `Not transmitted to PayPal · reference ${result.debugId ?? 'n/a'}`
+      : `HTTP ${result.httpStatus}${result.debugId ? ` · debug_id ${result.debugId}` : ''}`,
   );
   if (approval.action === 'provide-evidence') await setGatherState(disputeId, 'SUBMITTED');
 
@@ -403,7 +420,12 @@ export async function refreshFromPayPal(disputeId: string): Promise<string | nul
     const before = await getDisputeRow(disputeId);
     await upsertDisputeFromRaw(d, { fixture: env.isDemo });
     if (before && before.status !== d.status) {
-      await addTimeline(disputeId, 'dispute', `Status: ${before.status} → ${d.status}`, 'Read from PayPal');
+      await addTimeline(
+        disputeId,
+        'dispute',
+        `Status changed to ${statusLabel(d.status)}`,
+        `Previously ${statusLabel(before.status)} · confirmed with PayPal`,
+      );
     }
     if (d.status === 'RESOLVED') {
       await indexDisputeOutcome({

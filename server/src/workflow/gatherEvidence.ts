@@ -19,6 +19,7 @@
 import { nanoid } from 'nanoid';
 import { desc, eq } from 'drizzle-orm';
 import {
+  DISPUTE_ACTION_LABELS,
   DISPUTE_REASON_LABELS,
   DRAFT_MAX_LENGTH,
   emptyFacts,
@@ -62,6 +63,18 @@ const STEPS: StepDef[] = [
 ];
 
 export const MIN_DRAFT_CONFIDENCE = 0.5;
+
+/** "WAITING_FOR_SELLER_RESPONSE" -> "Waiting for seller response" for step details. */
+function sentence(value: string): string {
+  const s = value.replace(/_/g, ' ').toLowerCase();
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+const BACKEND_LABEL: Record<string, string> = {
+  elastic: 'Elastic',
+  'postgres-fts': 'PostgreSQL full-text search',
+  keyword: 'keyword search',
+};
 
 export function gatherEvidence(disputeId: string, actor = 'system'): Promise<void> {
   return runExclusive(disputeId, () => run(disputeId, actor));
@@ -112,7 +125,7 @@ async function run(disputeId: string, actor: string): Promise<void> {
       }
       return {
         value: d,
-        detail: `${DISPUTE_REASON_LABELS[(d.reason ?? 'OTHER') as DisputeReason]}, ${d.status}, ${allowedActionsFromLinks(d.links).length} actions available`,
+        detail: `${DISPUTE_REASON_LABELS[(d.reason ?? 'OTHER') as DisputeReason]} · ${sentence(d.status ?? 'OTHER')} · ${allowedActionsFromLinks(d.links).length} actions available`,
       };
     });
 
@@ -187,7 +200,7 @@ async function run(disputeId: string, actor: string): Promise<void> {
         disputeId,
         kind: 'order_record',
         source: 'fixture',
-        label: `Order ${rec.order_id} (fixture standing in for "${rec.source}")`,
+        label: `Order ${rec.order_id}`,
         sourceRef: rec.source,
         contentText: [
           `Order: ${rec.order_id}`,
@@ -240,7 +253,7 @@ async function run(disputeId: string, actor: string): Promise<void> {
           disputeId,
           kind: 'carrier_capture',
           source: cap.provider === 'kernel' ? 'kernel' : 'fixture',
-          label: `Carrier tracking page${cap.provider === 'fixture' ? ' (fixture)' : ''}`,
+          label: 'Carrier tracking page',
           sourceRef: cap.url,
           contentText: cap.text,
           filePath: cap.screenshotPath,
@@ -251,7 +264,7 @@ async function run(disputeId: string, actor: string): Promise<void> {
         });
         return {
           value: cap,
-          detail: `${cap.provider === 'kernel' ? 'KERNEL' : 'Fixture'} capture of ${cap.url ? new URL(cap.url).hostname : 'carrier page'}`,
+          detail: `${cap.provider === 'kernel' ? 'KERNEL browser capture' : 'Sample capture'} of ${cap.url ? new URL(cap.url).hostname : 'carrier page'}`,
         };
       },
       { retries: 1 },
@@ -284,7 +297,7 @@ async function run(disputeId: string, actor: string): Promise<void> {
       await logAi(disputeId, 'extract', res);
       return {
         value: res,
-        detail: `${res.generator === 'llm' ? res.model : 'rules'} · confidence ${res.value?.confidence.toFixed(2) ?? '—'}`,
+        detail: `${res.generator === 'llm' ? res.model : 'Standard rules'} · confidence ${res.value?.confidence.toFixed(2) ?? '—'}`,
         fallbackUsed: res.fallbackReason ? `Rule-based extraction (${res.fallbackReason})` : null,
       };
     });
@@ -304,7 +317,7 @@ async function run(disputeId: string, actor: string): Promise<void> {
       const r = await retrievePolicies(query, reason, 4);
       return {
         value: r,
-        detail: `${r.citations.length} passages via ${r.backend}`,
+        detail: `${r.citations.length} policy references via ${BACKEND_LABEL[r.backend] ?? r.backend}`,
         fallbackUsed: r.degraded ? r.detail : null,
       };
     });
@@ -384,7 +397,7 @@ async function run(disputeId: string, actor: string): Promise<void> {
 
       return {
         value: { planId, stored },
-        detail: `${score.score}/100 ${score.band}${score.capped ? ' (capped)' : ''} · recommends ${narrative.recommended_action}`,
+        detail: `${score.score}/100 ${sentence(score.band)}${score.capped ? ' (capped)' : ''} · recommends ${DISPUTE_ACTION_LABELS[narrative.recommended_action].label}`,
         fallbackUsed: res.fallbackReason ? `Rule-based plan (${res.fallbackReason})` : null,
       };
     });
@@ -445,7 +458,7 @@ async function run(disputeId: string, actor: string): Promise<void> {
       disputeId,
       'workflow',
       `Evidence gathered in ${secs}s`,
-      `Completeness ${score.score}/100 (${score.band}). ${items.length} evidence items.`,
+      `Completeness ${score.score}/100 (${sentence(score.band)}) · ${items.length} evidence items`,
     );
     await audit('workflow.finished', { runId: wf.id, durationMs: Date.now() - started, completeness: score.score }, { disputeId });
   } catch (err) {
