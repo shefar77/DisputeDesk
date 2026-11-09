@@ -62,26 +62,41 @@ export async function initDb(): Promise<Db> {
     // aborts — and once it is open we can no longer delete it on Windows. So the
     // rebuild happens here, before anything touches the files.
     if (lock.previousRunCrashed) {
-      if (!env.isDemo) {
-        lock.release();
-        throw new DatabaseUnusableError(dir, 'the previous run was interrupted');
-      }
+      if (!env.isDemo) throw new DatabaseUnusableError(dir, 'the previous run was interrupted');
       rebuildDataDir(dir);
     }
 
-    // 'memory://' keeps the database in RAM (tests, eval); anything else is a directory.
-    if (!isMemoryDir(dir)) mkdirSync(dir, { recursive: true });
+    const open = async () => {
+      // 'memory://' keeps the database in RAM (tests, eval); anything else is a directory.
+      if (!isMemoryDir(dir)) mkdirSync(dir, { recursive: true });
+      const instance = new PGlite(dir);
+      await withTimeout(instance.waitReady, OPEN_TIMEOUT_MS, `Opening the database at ${dir}`);
+      return instance;
+    };
 
-    const pg = new PGlite(dir);
+    // Note on the failure paths below: none of them release the lock. Leaving it
+    // in place is deliberate — the next boot then sees a crashed run and rebuilds
+    // before opening anything, instead of repeating the same failure.
+    let pg: Awaited<ReturnType<typeof open>>;
     try {
-      await withTimeout(pg.waitReady, OPEN_TIMEOUT_MS, `Opening the database at ${dir}`);
+      pg = await open();
     } catch (err) {
-      // The open never settled or threw. We cannot clean up underneath a hung
-      // instance, so report precisely instead of leaving the process hanging.
-      lock.release();
-      lock = null;
-      logger.error({ dir, err: err instanceof Error ? err.message : err }, 'Database open failed');
-      throw new DatabaseUnusableError(dir, err instanceof Error ? err.message : 'unknown error');
+      const message = err instanceof Error ? err.message : String(err);
+      const hung = /did not complete within/.test(message);
+      logger.error({ dir, hung, err: message }, 'Database open failed');
+
+      // A hung open may still hold file handles, and deleting a directory out
+      // from under it risks exactly the corruption we are trying to avoid.
+      // A thrown open has already given up, so its files are safe to replace.
+      if (hung || !env.isDemo) throw new DatabaseUnusableError(dir, message);
+
+      logger.warn({ dir }, 'Database is unusable — rebuilding the demo database and retrying once');
+      rebuildDataDir(dir);
+      try {
+        pg = await open();
+      } catch (retryErr) {
+        throw new DatabaseUnusableError(dir, `rebuild did not help: ${retryErr instanceof Error ? retryErr.message : 'unknown'}`);
+      }
     }
 
     db = drizzlePglite(pg, { schema });

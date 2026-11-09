@@ -90,8 +90,9 @@ export class DatabaseUnusableError extends Error {
   constructor(dataDir: string, reason: string) {
     super(
       `The database at ${dataDir} could not be opened (${reason}). It was most likely left behind by a ` +
-        'process that was killed mid-write. Automatic recovery only runs in demo mode, where the data is ' +
-        `disposable. Back up and remove ${dataDir}, then restart.`,
+        'process that was killed mid-write. The lock beside it has been left in place, so restarting will ' +
+        'rebuild the directory first — in demo mode that happens automatically and the sample data is ' +
+        `regenerated. If this repeats, back up and remove ${dataDir}, then start again.`,
     );
     this.name = 'DatabaseUnusableError';
   }
