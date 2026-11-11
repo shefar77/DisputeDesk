@@ -16,7 +16,7 @@ import {
 import { problem } from './app.js';
 import { getDb, getDriver, schema } from './db/client.js';
 import { env } from './env.js';
-import { getLlm } from './llm/index.js';
+import { getDeterministic, getLlm, initLlm, setLlm } from './llm/index.js';
 import { budgetStatus } from './llm/budget.js';
 import { getDemoGateway, getPayPal } from './paypal/index.js';
 import { sha256 } from './paypal/payload.js';
@@ -281,7 +281,19 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     demo.reset();
     await resetDemoData();
     await audit('demo.reset', {}, { actor: env.operator });
-    await pollDisputes({ gatherNew: true });
+    // Refill with the *rule-based* generator, exactly as boot does. Running the
+    // model here instead meant one evidence workflow per fixture before this
+    // request could answer: minutes of latency on a free tier, a request that
+    // times out long before it finishes, a queue left half-gathered, and a
+    // visitor able to spend the daily model budget with one button. The model
+    // is what runs when a human asks for it on a single dispute — "Re-gather".
+    setLlm(getDeterministic());
+    try {
+      await pollDisputes({ gatherNew: true });
+    } finally {
+      setLlm(null);
+      initLlm();
+    }
     return { ok: true };
   });
 
