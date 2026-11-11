@@ -17,7 +17,21 @@ services:
     plan: free
     # --include=dev so the build has vite/tsc even though NODE_ENV=production.
     buildCommand: npm ci --include=dev && npm run build
-    startCommand: npm start
+    # Two things this line is doing, both measured on a 512 MiB budget:
+    #
+    # 1. It is deliberately NOT `npm start`. That spawns npm -> npm -w server ->
+    #    node, and each npm is a full Node process: ~98 MiB spent on two
+    #    wrappers whose only job is to exec the next one (408 MiB for the whole
+    #    `npm start` tree vs 285 MiB for the server alone).
+    # 2. --max-old-space-size caps the V8 heap. V8 sizes it from the HOST's RAM,
+    #    not the container limit, so it lets the heap grow far too long before
+    #    collecting: 421 MiB resident at boot without the flag, 298 MiB with it.
+    #
+    # The same flag is in the root `start` script, so a container that is still
+    # running the old `npm start` command gets the cap too. PGlite's WASM heap
+    # is separate and fixed at 128 MiB — its module declares 2048 pages, so it
+    # cannot be lowered (a smaller value is a hard LinkError at startup).
+    startCommand: node --max-old-space-size=256 server/dist/index.js
     healthCheckPath: /api/health
     envVars:
       - key: NODE_VERSION
