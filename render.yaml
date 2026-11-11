@@ -1,18 +1,22 @@
-# Render Blueprint: web service (API + built UI), managed Postgres, and a cron
-# job that reconciles with PayPal as a safety net for missed webhooks (FR-2).
-# Secrets marked sync:false are entered in the Render dashboard, never committed.
-databases:
-  - name: disputedesk-db
-    plan: free
-    databaseName: disputedesk
-    user: disputedesk
-
+# Render Blueprint — single free web service (API + built UI), embedded PGlite.
+#
+# Deliberately minimal for the hackathon demo:
+#  - No managed Postgres. Demo mode regenerates its fixtures on every boot, so the
+#    container's own disk (embedded PGlite) is enough and there is no 30-day free
+#    database to expire before the demo window closes. Set DATABASE_URL in the
+#    dashboard later if you ever want persistence.
+#  - No cron. The reconciliation poll is a safety net for real PayPal webhooks
+#    (FR-2); in demo mode there is nothing to reconcile, and a Render cron needs a
+#    paid plan. The in-process poller still runs inside the web service.
+#
+# Secrets marked `sync: false` are entered in the Render dashboard, never committed.
 services:
   - type: web
     name: disputedesk
     runtime: node
     plan: free
-    buildCommand: npm ci && npm run build
+    # --include=dev so the build has vite/tsc even though NODE_ENV=production.
+    buildCommand: npm ci --include=dev && npm run build
     startCommand: npm start
     healthCheckPath: /api/health
     envVars:
@@ -20,46 +24,25 @@ services:
         value: "22"
       - key: NODE_ENV
         value: production
-      - key: DATABASE_URL
-        fromDatabase:
-          name: disputedesk-db
-          property: connectionString
+      # No PayPal credentials -> demo mode (fixtures, no outbound calls). Explicit
+      # so a stray credential can never flip a public demo into sandbox writes.
+      - key: DEMO_MODE
+        value: "true"
+      # Signs demo sessions; Render generates a strong value and keeps it stable.
       - key: SESSION_SECRET
         generateValue: true
-      - key: CRON_SECRET
-        generateValue: true
-      - key: DEMO_PASSWORD
+      # --- AI: enter your Google AI Studio key in the dashboard -----------------
+      - key: GEMINI_API_KEY
         sync: false
-      - key: PAYPAL_CLIENT_ID
-        sync: false
-      - key: PAYPAL_CLIENT_SECRET
-        sync: false
-      - key: PAYPAL_WEBHOOK_ID
-        sync: false
-      - key: ANTHROPIC_API_KEY
-        sync: false
+      - key: LLM_MODEL
+        value: gemini-3-flash-preview
+      # Tried in order when the preferred model is unavailable (free-tier 503s).
+      - key: LLM_FALLBACK_MODELS
+        value: gemini-3.1-flash-lite,gemini-3.5-flash-lite,gemini-3.8-flash
+      # Hard daily spend stop, enforced in code. Falls back to the rule-based
+      # generator when reached, so a public demo can never run up a bill.
       - key: LLM_DAILY_CAP_USD
         value: "5"
-      - key: ELASTIC_CLOUD_ID
+      # Optional: set a value to require a shared password for the public UI.
+      - key: DEMO_PASSWORD
         sync: false
-      - key: ELASTIC_API_KEY
-        sync: false
-      - key: KERNEL_API_KEY
-        sync: false
-
-  - type: cron
-    name: disputedesk-poll
-    runtime: node
-    plan: starter
-    schedule: "*/10 * * * *"
-    buildCommand: "true"
-    startCommand: >-
-      curl -fsS -X POST "$APP_URL/api/cron/poll" -H "x-cron-secret: $CRON_SECRET"
-    envVars:
-      - key: APP_URL
-        sync: false
-      - key: CRON_SECRET
-        fromService:
-          name: disputedesk
-          type: web
-          envVarKey: CRON_SECRET

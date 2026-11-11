@@ -119,6 +119,39 @@ const CARRIER_DISPLAY: Record<string, string> = {
   HK_HONGKONG_POST: 'Hongkong Post',
 };
 
+const MONTHS = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+] as const;
+
+/**
+ * Render a delivery timestamp for the rubric line.
+ *
+ * Extractors legitimately return either a machine timestamp
+ * ("2026-10-23T11:41:00") or the carrier's own wording ("23 October 2026 at
+ * 11:41am"), and which one you get depends on the model. An ISO-shaped value is
+ * reformatted by reading its parts as text; anything else is shown exactly as
+ * the source wrote it. The value itself is never rewritten — the raw string
+ * stays in the extracted-facts table.
+ *
+ * Deliberately NOT parsed into a Date. A carrier states a local wall-clock time,
+ * and bare ISO strings with no offset are treated as *local* by Date.parse, so
+ * round-tripping through a Date and formatting in another zone silently moves
+ * the delivery time (11:41 became 06:11 when rendered as UTC from IST). Shifting
+ * a delivery time is falsifying evidence, so the digits are kept as given.
+ */
+export function deliveredAtDisplay(value: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/.exec(value.trim());
+  if (!m) return value;
+
+  const [, year, month, day, hour, minute] = m;
+  const monthName = MONTHS[Number(month) - 1];
+  if (!monthName) return value;
+
+  const date = `${Number(day)} ${monthName} ${year}`;
+  return hour && minute ? `${date} at ${hour}:${minute}` : date;
+}
+
 export function carrierDisplayName(value: string): string {
   return CARRIER_DISPLAY[value] ?? value.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
 }
@@ -167,7 +200,7 @@ const INR_RUBRIC: Rubric = {
           case 'DELIVERED':
             return {
               satisfied: 'yes',
-              detail: f.deliveredAt ? `Delivered ${f.deliveredAt}` : 'Carrier reports delivered',
+              detail: f.deliveredAt ? `Delivered ${deliveredAtDisplay(f.deliveredAt)}` : 'Carrier reports delivered',
             };
           case 'OUT_FOR_DELIVERY':
           case 'IN_TRANSIT':

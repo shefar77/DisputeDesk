@@ -210,7 +210,7 @@ export function buildScenarios(now: Date = new Date()): Scenario[] {
       tracking_number: 'RM284461193GB',
       ship_to: SELLER_ADDRESS,
       items: [{ sku: 'SKU-1', name: 'Merino scarf, charcoal', qty: 1 }],
-      source: 'Google Sheets — Orders 2026',
+      source: 'Merchant order record (sample)',
     },
     expected: {
       band: 'COMPLETE',
@@ -268,7 +268,7 @@ export function buildScenarios(now: Date = new Date()): Scenario[] {
       tracking_number: '1Z999AA10123456784',
       ship_to: SELLER_ADDRESS,
       items: [{ sku: 'SKU-2', name: 'Cast iron skillet, 26cm', qty: 1 }],
-      source: 'Google Sheets — Orders 2026',
+      source: 'Merchant order record (sample)',
     },
     expected: {
       band: 'STRONG',
@@ -326,7 +326,7 @@ export function buildScenarios(now: Date = new Date()): Scenario[] {
       tracking_number: '770123456789',
       ship_to: SELLER_ADDRESS,
       items: [{ sku: 'SKU-3', name: 'Wool throw, oatmeal', qty: 1 }],
-      source: 'Google Sheets — Orders 2026',
+      source: 'Merchant order record (sample)',
     },
     expected: {
       band: 'PARTIAL',
@@ -382,7 +382,7 @@ export function buildScenarios(now: Date = new Date()): Scenario[] {
       tracking_number: 'JD0149820304',
       ship_to: SELLER_ADDRESS,
       items: [{ sku: 'SKU-4', name: 'Desk lamp, brass', qty: 1 }],
-      source: 'Google Sheets — Orders 2026',
+      source: 'Merchant order record (sample)',
     },
     expected: {
       band: 'PARTIAL',
@@ -429,7 +429,7 @@ export function buildScenarios(now: Date = new Date()): Scenario[] {
       tracking_number: null,
       ship_to: SELLER_ADDRESS,
       items: [{ sku: 'SKU-5', name: 'Beeswax candle set', qty: 2 }],
-      source: 'Google Sheets — Orders 2026',
+      source: 'Merchant order record (sample)',
     },
     expected: {
       band: 'WEAK',
@@ -481,7 +481,7 @@ export function buildScenarios(now: Date = new Date()): Scenario[] {
       tracking_number: '9400111899223818462514',
       ship_to: SELLER_ADDRESS,
       items: [{ sku: 'SKU-6', name: 'Ceramic planter, large', qty: 1 }],
-      source: 'Google Sheets — Orders 2026',
+      source: 'Merchant order record (sample)',
     },
     expected: {
       band: 'PARTIAL',
@@ -546,7 +546,7 @@ export function buildScenarios(now: Date = new Date()): Scenario[] {
       tracking_number: '1Z999AA10123456785',
       ship_to: SELLER_ADDRESS,
       items: [{ sku: 'SKU-7', name: 'Studio monitor stand, pair', qty: 1 }],
-      source: 'Google Sheets — Orders 2026',
+      source: 'Merchant order record (sample)',
     },
     expected: {
       band: 'COMPLETE',
@@ -603,7 +603,7 @@ export function buildScenarios(now: Date = new Date()): Scenario[] {
       tracking_number: 'RM284461200GB',
       ship_to: SELLER_ADDRESS,
       items: [{ sku: 'SKU-8', name: 'Linen apron', qty: 1 }],
-      source: 'Google Sheets — Orders 2026',
+      source: 'Merchant order record (sample)',
     },
     expected: {
       band: 'PARTIAL',
@@ -658,7 +658,7 @@ export function buildScenarios(now: Date = new Date()): Scenario[] {
       tracking_number: '9400111899223818462515',
       ship_to: SELLER_ADDRESS,
       items: [{ sku: 'SKU-9', name: 'Enamel mug, set of two', qty: 2 }],
-      source: 'Google Sheets — Orders 2026',
+      source: 'Merchant order record (sample)',
     },
     expected: {
       band: 'WEAK',
@@ -714,7 +714,7 @@ export function buildScenarios(now: Date = new Date()): Scenario[] {
       tracking_number: 'PB123456789GB',
       ship_to: SELLER_ADDRESS,
       items: [{ sku: 'SKU-10', name: 'Cotton bedding set', qty: 1 }],
-      source: 'Google Sheets — Orders 2026',
+      source: 'Merchant order record (sample)',
     },
     expected: {
       band: 'STRONG',
@@ -769,7 +769,7 @@ export function buildScenarios(now: Date = new Date()): Scenario[] {
       tracking_number: 'JD0149820311',
       ship_to: SELLER_ADDRESS,
       items: [{ sku: 'SKU-11', name: 'Turntable, walnut plinth', qty: 1 }],
-      source: 'Google Sheets — Orders 2026',
+      source: 'Merchant order record (sample)',
     },
     expected: {
       band: 'PARTIAL',
@@ -825,7 +825,7 @@ export function buildScenarios(now: Date = new Date()): Scenario[] {
       tracking_number: 'H01AA9912348877',
       ship_to: SELLER_ADDRESS,
       items: [{ sku: 'SKU-12', name: 'Seagrass basket', qty: 1 }],
-      source: 'Google Sheets — Orders 2026',
+      source: 'Merchant order record (sample)',
     },
     expected: {
       band: 'STRONG',
@@ -930,7 +930,7 @@ export function heldOutScenarios(now: Date = new Date()): Scenario[] {
     tracking_number: tn,
     ship_to: shipTo,
     items: [{ sku: 'SKU-H', name: 'Held-out item', qty: 1 }],
-    source: 'Google Sheets — Orders 2026',
+    source: 'Merchant order record (sample)',
   });
   const US = { name: 'R. Alvarez', line1: '512 Congress Ave', city: 'Austin', postal_code: '78701', country_code: 'US' };
   const mk = (id: string, carrier: string, tn: string, shipTo?: typeof SELLER_ADDRESS) =>

@@ -1,10 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
 
-/**
- * E2E (PRD §21): queue -> detail -> approve -> status, in demo mode.
- * `npm run test:e2e` runs once; `npx playwright test --repeat-each=20` is the
- * PRD's "20 scripted runs" reliability check (each run resets demo data first).
- */
+
 export default defineConfig({
   testDir: 'e2e',
   timeout: 60_000,
@@ -17,6 +13,6 @@ export default defineConfig({
     url: 'http://localhost:8799/api/health',
     timeout: 180_000,
     reuseExistingServer: false,
-    env: { PORT: '8799', DEMO_MODE: 'true', PGLITE_DIR: 'memory://', POLL_ENABLED: 'false', LOG_LEVEL: 'warn', ANTHROPIC_API_KEY: '' },
+    env: { PORT: '8799', DEMO_MODE: 'true', PGLITE_DIR: 'memory://', POLL_ENABLED: 'false', LOG_LEVEL: 'warn', ANTHROPIC_API_KEY: '', GEMINI_API_KEY: '' },
   },
 });

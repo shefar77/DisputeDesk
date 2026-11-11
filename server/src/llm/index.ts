@@ -11,6 +11,7 @@
 import { env } from '../env.js';
 import { logger } from '../log.js';
 import { AnthropicLLM, type LLMClient, type LlmResult } from './client.js';
+import { GeminiLLM } from './gemini.js';
 import { DeterministicLLM } from './deterministic.js';
 
 let primary: LLMClient | null = null;
@@ -18,12 +19,18 @@ const deterministic = new DeterministicLLM();
 
 export function initLlm(): LLMClient {
   if (primary) return primary;
-  if (env.llm.provider === 'anthropic' && env.llm.apiKey) {
+  if (env.llm.provider === 'gemini' && env.llm.apiKey) {
+    primary = new GeminiLLM(env.llm.apiKey, [env.llm.model, ...env.llm.fallbackModels]);
+    logger.info(
+      { model: env.llm.model, fallbacks: env.llm.fallbackModels },
+      'LLM: Gemini structured outputs',
+    );
+  } else if (env.llm.provider === 'anthropic' && env.llm.apiKey) {
     primary = new AnthropicLLM(env.llm.apiKey, env.llm.model);
     logger.info({ model: env.llm.model }, 'LLM: Anthropic structured outputs');
   } else {
     primary = deterministic;
-    logger.info('LLM: no ANTHROPIC_API_KEY — using the deterministic generator');
+    logger.info('LLM: no GEMINI_API_KEY or ANTHROPIC_API_KEY — using the deterministic generator');
   }
   return primary;
 }

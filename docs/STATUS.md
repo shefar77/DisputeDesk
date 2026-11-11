@@ -1,6 +1,6 @@
 # Build status against the PRD
 
-Snapshot: 2026-11-01. Each row uses one of four verdicts:
+Snapshot: 2026-11-11. Each row uses one of four verdicts:
 
 - **Verified:** exercised by an automated test or a recorded run.
 - **Demo-verified:** verified in demo mode; the live path uses the same code but has not been run against the real service.
@@ -34,12 +34,12 @@ Snapshot: 2026-11-01. Each row uses one of four verdicts:
 |---|---|---|---|
 | P0 flow completes in demo mode | ≥ 95% of 20 runs | **20/20 (100%)** | `npx playwright test -g J1 --repeat-each=20` |
 | Completeness band agreement on 12 labelled fixtures | ≥ 80% within ±1 | **100%** within ±1 (91.7% exact), rule-based | `npm run eval` (development set) |
-| The same metric on 6 held-out fixtures | — | **66.7%** within ±1 (33.3% exact), rule-based | `npm run eval` (held-out set) |
+| The same metric on 6 held-out fixtures | — | **66.7%** within ±1 (33.3% exact), rule-based; **100%** within ±1 (83.3–100% exact), Gemini | `npm run eval` / `npm run eval -- --with-llm` |
 | Zero actions without an approval record | 100% | **100%** | integration test plus the DB unique constraint |
 | Drafts cite only existing ids | 100% | **100%** | validator plus eval |
-| Dispute event to ready-for-review card | < 90 s | ~0.1 s rule-based on fixtures; model latency not measured | workflow timing in the timeline |
+| Dispute event to ready-for-review card | < 90 s | ~0.1 s rule-based; **~27 s** with Gemini (3 calls) on an uncontended free tier, up to ~125 s during a 503 spike | workflow timing in the timeline |
 
-**AI vs baseline (PRD §13 Audit C).** Not measured yet: this environment had no `ANTHROPIC_API_KEY`, and a paid run is the owner's decision. Run `npm run eval -- --with-llm`. The baseline's drop on the held-out set (66.7% field accuracy) is where a model should help. No claim is made until that is measured.
+**AI vs baseline (PRD §13 Audit C). Measured 2026-11-11.** Three runs of `npm run eval -- --with-llm` against Gemini. On the 6 held-out cases the baseline scores 66.7% field accuracy / 33.3% exact band; the model scores 93.3–100% / 83.3–100%, and 100% within ±1 in every run. Ranges rather than single figures because the model is nondeterministic. All three runs were served by `gemini-3.1-flash-lite` after the newer Flash tiers returned 503 under free-tier contention. Held-out suites were 6/6 model-generated every run; one development-set run degraded to 9/12, so that column mixes generators and is not quoted. Draft *quality* is still ungraded — `docs/eval-drafts.md` needs the human 3-point rubric.
 
 ## Sponsor integrations (PRD §14). The Nov 7 freeze rule applies
 
@@ -61,8 +61,9 @@ Per PRD §14, any sponsor still unverified on Nov 7 must be removed from the REA
 1. **Embedded PGlite by default; Postgres through `DATABASE_URL`.** The Docker daemon was unavailable, and judges should not need Docker. PGlite is Postgres compiled to WASM, so the schema and queries are identical. *The `DATABASE_URL` / node-postgres path has not been run against a real server yet.*
 2. **The completeness score comes entirely from the rule-based rubric** (the PRD said "partly"). The model extracts facts and writes the narrative. The score is reproducible and testable.
 3. **Contradiction cap.** Evidence that contradicts delivery (wrong postcode, return to sender, carrier exception) caps the score at 69 and steers the recommendation towards an offer. This was added after hand-labelling showed that a wrong-address delivery would otherwise score STRONG.
-4. **No `temperature` is sent.** Current Claude models reject sampling parameters with a 400 error. Determinism comes from structured outputs and from rule-based scoring.
-5. **Default model is `claude-opus-5-5`**, set through `LLM_MODEL`. The $5/day hard cap is enforced in code whichever model is configured.
+4. **No sampling parameters are sent.** Current Claude models reject them with a 400, and nothing equivalent is sent to Gemini either. Determinism comes from schema-constrained decoding and from rule-based scoring.
+5. **Default provider is Gemini** (`GEMINI_API_KEY`, default model `gemini-3-flash-preview`), with Claude available via `LLM_PROVIDER=anthropic`. Both sit behind one `LLMClient` interface and share the same prompts, JSON Schemas and validators. The $5/day hard cap is enforced in code whichever provider or model is configured.
+9. **Model fallback chain.** The newer Gemini Flash tiers answer free-tier requests with a 503 "high demand" when busy, so `LLM_FALLBACK_MODELS` lists models to try next. The UI and the eval report name whichever model actually served, never the one configured.
 6. **The rule-based generator is also the eval baseline.** It is real shipped code, not a strawman written for the comparison.
 7. **Held-out eval set added.** The rule-based extractor was tuned on the 12 development cases, so a second set written afterwards is needed for an honest comparison.
 8. **Demo-only endpoints** `POST /api/demo/reset` and `POST /api/demo/disputes/:id/resolve` exist so the full loop can be shown without PayPal. Both return 404 outside demo mode, and every effect they have is labelled as a simulation.
@@ -71,7 +72,7 @@ Per PRD §14, any sponsor still unverified on Nov 7 must be removed from the REA
 
 - G0 sandbox spike, steps 1–6 (`spike-G0.md`).
 - Merchant validation: zero conversations so far. The README says so.
-- Model eval run (`--with-llm`) and human grading of `docs/eval-drafts.md`.
+- Human grading of `docs/eval-drafts.md` against the PRD's 3-point rubric. (The model eval run itself is done — see §AI vs baseline above.)
 - Render deployment and a free hosted demo through Dec 15.
 - Quotas and trial terms for Elastic, Kernel and Render (`docs/quotas.md` not started).
 - Name/trademark check.

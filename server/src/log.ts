@@ -14,6 +14,8 @@ const SECRET_VALUE_RES: RegExp[] = [
   /\bBearer\s+[A-Za-z0-9._\-]{12,}/gi,
   /\bA2[13][A-Za-z0-9._\-]{20,}/g, // PayPal access tokens
   /\bsk-ant-[A-Za-z0-9._\-]{16,}/g, // Anthropic keys
+  /\bAIza[A-Za-z0-9_\-]{20,}/g, // Google / Gemini API keys
+  /\bAQ\.[A-Za-z0-9_\-.]{20,}/g, // Google AI Studio keys (newer AQ. format)
   /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, // email addresses
 ];
 

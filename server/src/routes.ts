@@ -86,7 +86,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
         {
           name: 'LLM',
           status: llm.enabled ? 'ok' : 'disabled',
-          detail: llm.enabled ? `${llm.name} ${llm.model}` : 'ANTHROPIC_API_KEY not set',
+          detail: llm.enabled ? `${llm.name} ${llm.model}` : 'GEMINI_API_KEY not set',
           fallback: llm.enabled ? 'Rule-based generator on failure' : 'Rule-based generator',
         },
         {

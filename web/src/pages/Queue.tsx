@@ -169,7 +169,7 @@ export function QueuePage() {
       {
         headerName: 'Time left',
         field: 'dueIn',
-        width: 126,
+        width: 142,
         comparator: (_a, _b, na, nb) => (na.data?.urgency.sortKey ?? 0) - (nb.data?.urgency.sortKey ?? 0),
         valueFormatter: (p) => (p.data?.status === 'RESOLVED' || p.data?.status === 'UNDER_REVIEW' ? '—' : String(p.value ?? '—')),
         cellClass: 'nowrap num cell-strong',
@@ -193,7 +193,7 @@ export function QueuePage() {
       {
         headerName: 'PayPal status',
         field: 'status',
-        width: 160,
+        width: 190,
         cellRenderer: (p: ICellRendererParams<QueueItem>) => (p.data ? <StatusBadge status={p.data.status} compact /> : null),
       },
       { headerName: 'Evidence score', field: 'completeness', width: 160, cellRenderer: ScoreCell },

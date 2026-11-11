@@ -21,7 +21,7 @@
     "seed": "npm run seed -w @disputedesk/server",
     "typecheck": "tsc -p server/tsconfig.json --noEmit && tsc -p web/tsconfig.json --noEmit",
     "test": "npm run test -w @disputedesk/server",
-    "eval": "npm run eval -w @disputedesk/server",
+    "eval": "cd server && npx tsx src/eval/run.ts",
     "test:e2e": "playwright test",
     "postman": "newman run postman/DisputeDesk.postman_collection.json -e postman/local.postman_environment.json --folder \"DisputeDesk API\""
   },

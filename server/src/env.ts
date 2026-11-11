@@ -56,6 +56,54 @@ const bool = (k: string, dflt: boolean): boolean => {
   return ['1', 'true', 'yes', 'on'].includes(v.toLowerCase());
 };
 
+const anthropicKey = str('ANTHROPIC_API_KEY');
+const geminiKey = str('GEMINI_API_KEY');
+
+/**
+ * Which provider generates the text.
+ *
+ * An explicit `LLM_PROVIDER` always wins, so a key left in the environment can
+ * never silently override a deliberate choice. Otherwise whichever key is
+ * present decides, and with neither we run the rule-based generator — which is
+ * a supported mode, not an error: a fresh clone with no secrets must still work.
+ */
+export type LlmProvider = 'gemini' | 'anthropic' | 'none';
+const requestedProvider = (str('LLM_PROVIDER') ?? '').toLowerCase();
+const llmProvider: LlmProvider =
+  requestedProvider === 'gemini' || requestedProvider === 'anthropic'
+    ? requestedProvider
+    : geminiKey
+      ? 'gemini'
+      : anthropicKey
+        ? 'anthropic'
+        : 'none';
+
+/** Flash is the right tier here: the tasks are short, schema-constrained and high-volume. */
+const DEFAULT_MODEL: Record<LlmProvider, string> = {
+  gemini: 'gemini-3-flash-preview',
+  anthropic: 'claude-opus-5-5',
+  none: 'rules-v1',
+};
+
+/**
+ * Models to try when the preferred one is unavailable.
+ *
+ * The newest Flash tiers answer a free-tier request with a 503 "currently
+ * experiencing high demand" whenever they are busy, which is a property of the
+ * moment and not of the request. Falling back to a less contended model keeps
+ * real AI output on screen instead of dropping to the rule-based template.
+ */
+const DEFAULT_FALLBACK_MODELS: Record<LlmProvider, string[]> = {
+  gemini: ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini-3.8-flash'],
+  anthropic: [],
+  none: [],
+};
+
+const csv = (k: string): string[] | null => {
+  const v = str(k);
+  return v === null ? null : v.split(',').map((x) => x.trim()).filter(Boolean);
+};
+
 const paypalClientId = str('PAYPAL_CLIENT_ID');
 const paypalClientSecret = str('PAYPAL_CLIENT_SECRET');
 
@@ -116,11 +164,25 @@ export const env = {
   },
 
   llm: {
-    provider: (str('LLM_PROVIDER') ?? 'anthropic').toLowerCase(),
-    apiKey: str('ANTHROPIC_API_KEY'),
-    model: str('LLM_MODEL') ?? 'claude-sonnet-5-5',
-    maxTokens: num('LLM_MAX_TOKENS', 2048),
-    temperature: num('LLM_TEMPERATURE', 0.1),
+    provider: llmProvider,
+    /** The key for the selected provider only; the other one is never read. */
+    apiKey: llmProvider === 'gemini' ? geminiKey : llmProvider === 'anthropic' ? anthropicKey : null,
+    model: str('LLM_MODEL') ?? DEFAULT_MODEL[llmProvider],
+    /** Tried in order, only when the preferred model is unavailable. */
+    fallbackModels: csv('LLM_FALLBACK_MODELS') ?? DEFAULT_FALLBACK_MODELS[llmProvider],
+    /**
+     * A hung provider must not hold a dispute workflow open indefinitely. Kept
+     * tight because an overloaded model tends to hang rather than answer, and
+     * the next model in the chain is usually seconds away.
+     */
+    timeoutMs: num('LLM_TIMEOUT_MS', 30_000),
+    /**
+     * Thinking is always on for current models and its tokens count towards this
+     * ceiling, so a tight limit truncates the answer and silently demotes the
+     * result to the rule-based generator. 8k leaves room for all three tasks.
+     * No `temperature`: current models reject sampling parameters with a 400.
+     */
+    maxTokens: num('LLM_MAX_TOKENS', 8192),
     /** PRD §13: hard stop in code, not a warning. */
     dailyCapUsd: num('LLM_DAILY_CAP_USD', 5),
   },

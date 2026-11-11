@@ -60,7 +60,7 @@ flowchart LR
     DB[(Postgres / PGlite)]
   end
   UI[React + AG Grid]
-  LLM[Claude<br/>structured outputs]
+  LLM[Gemini Flash<br/>structured outputs]
   EL[(Elastic<br/>or Postgres FTS)]
   KN[KERNEL browser]
 
@@ -82,24 +82,46 @@ flowchart LR
 
 | Task | Who does it |
 |---|---|
-| Extract shipping facts from carrier pages and records | Claude (structured outputs). Tracking numbers are cross-checked to appear verbatim in a source |
+| Extract shipping facts from carrier pages and records | Gemini Flash (structured outputs). Tracking numbers are cross-checked to appear verbatim in a source |
 | Score evidence completeness | **Rubric only**, never the model |
-| Explain the case, name risks, recommend an action | Claude, limited to actions PayPal offers. Conceding is only accepted when evidence is WEAK |
-| Draft the response | Claude. Citations are validated against stored evidence |
+| Explain the case, name risks, recommend an action | Gemini Flash, limited to actions PayPal offers. Conceding is only accepted when evidence is WEAK |
+| Draft the response | Gemini Flash. Citations are validated against stored evidence |
 | Triage order | Deterministic, by deadline |
 
 Without a key, or once the $5/day hard cap is reached, a **rule-based generator** takes over. It is labelled as such in the UI and doubles as the evaluation baseline.
 
 **Evaluation** (`npm run eval`, results in [`docs/eval-results.md`](docs/eval-results.md)):
 
-| Rule-based baseline | Development set (12) | Held-out set (6) |
-|---|---|---|
-| Extraction field accuracy | 100% | 66.7% |
-| Band within ±1 (PRD target ≥ 80%) | 100% | 66.7% |
-| Prompt-injection case | resisted | — |
-| Cited ids exist | 100% | 100% |
+The held-out set is the honest comparison. The rule-based extractor was written
+while looking at the 12 development cases, so its 100% there is an upper bound,
+not a generalisation estimate. The 6 held-out cases were written afterwards, in
+carrier phrasings it was never tuned on.
 
-The rule-based extractor was written against the development set, so 100% there is an upper bound. The held-out set uses carrier phrasings it was never tuned on, and the drop there is the case for a model. **The model has not been evaluated in this build**: run `npm run eval -- --with-llm` with `ANTHROPIC_API_KEY` set, at a cost of about 54 calls. Until that run, this README makes no claim that the model beats the baseline.
+| Held-out set (6 cases) | Rule-based baseline | Gemini |
+|---|---|---|
+| Extraction field accuracy | 66.7% | **93.3 – 100%** |
+| Completeness band, exact | 33.3% | **83.3 – 100%** |
+| Band within ±1 (PRD target ≥ 80%) | 66.7% | **100%** |
+| Requirement-level agreement | 69.4% | **97.2 – 100%** |
+| Cited ids exist | 100% | **100%** |
+| Prompt-injection case | resisted | **resisted** |
+
+Ranges span three runs of `npm run eval -- --with-llm` on 2026-11-11 (about 54
+model calls each, roughly $0.20). The model is nondeterministic, so a re-run will
+land somewhere in these ranges rather than on one figure; the baseline is
+deterministic and returns the same numbers every time. All three model runs were
+served by `gemini-3.1-flash-lite`, because the newer Flash tiers were returning
+503 "high demand" on the free tier and the client fell back — the report names
+whichever model actually served, not the one that was configured.
+
+Every suite in the report states how many of its cases the model generated. On
+the development set one run degraded to **9/12** under that same contention, so
+its model column mixes model and rule-based results and is not quoted here. The
+held-out suites were **6/6** model-generated in all three runs.
+
+**Not claimed:** that the model wins on the development set (the baseline is
+tuned on it), or that draft *quality* is better — that needs the human grading in
+[`docs/eval-drafts.md`](docs/eval-drafts.md), which has not been done.
 
 ## Configuration
 
@@ -109,7 +131,8 @@ Every variable is optional. Copy `.env.example` to `.env`.
 |---|---|---|
 | `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET` | PayPal **sandbox** mode | Demo mode (fixtures) |
 | `PAYPAL_WEBHOOK_ID` | Webhook signature verification | Polling only |
-| `ANTHROPIC_API_KEY`, `LLM_MODEL` (default `claude-opus-5-5`) | Model extraction, planning and drafting | Rule-based generator |
+| `GEMINI_API_KEY`, `LLM_MODEL` (default `gemini-3.8-flash`) | Model extraction, planning and drafting | Rule-based generator |
+| `ANTHROPIC_API_KEY` | Claude instead of Gemini (`LLM_PROVIDER=anthropic`) | Gemini, or the rule-based generator |
 | `LLM_DAILY_CAP_USD` (default 5) | Hard spend stop | — |
 | `DATABASE_URL` | External Postgres | Embedded PGlite in `.data/` |
 | `ELASTIC_URL` / `ELASTIC_CLOUD_ID`, `ELASTIC_API_KEY` | Elastic retrieval and ES\|QL | Postgres full-text search |
@@ -122,13 +145,13 @@ Demo state resets on every restart; set `DEMO_RESET_ON_BOOT=false` to keep it.
 
 | Command | What it checks | Last result |
 |---|---|---|
-| `npm test` | 64 unit, integration and LLM-wire tests (Vitest, in-memory Postgres) | 64/64 |
+| `npm test` | 87 unit, integration, LLM-wire (Gemini + Claude) and crash-recovery tests (Vitest, in-memory Postgres) | 87/87 |
 | `npm run test:e2e` | Playwright: J1 approve flow, J3 link-gating, injection, banner | 4/4; J1 20/20 with `--repeat-each=20` |
 | `npm run postman` | Newman against the running demo server | 12 requests, 27 assertions, 0 failures |
 | `npm run eval` | AI eval, rule-based baseline | see above |
 | `npm run typecheck` | Server and web TypeScript | clean |
 
-The model path is checked without spending money: a mock `fetch` is injected into the Anthropic SDK, and the tests assert on the exact request (structured-output format, no `temperature`, untrusted text wrapped).
+Both model paths are checked without spending money: a mock `fetch` is injected into the provider client, and the tests assert on the exact request (structured-output format, no sampling parameters, API key in a header and never in the URL or body, untrusted text wrapped and injection phrases neutralised).
 
 ## Deploying
 

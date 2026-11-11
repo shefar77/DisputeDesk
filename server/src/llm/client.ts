@@ -216,7 +216,7 @@ export class AnthropicLLM implements LLMClient {
       // stop_reason can be inspected. The format object still constrains decoding.
       const response = await this.client.messages.create({
         model: this.model,
-        max_tokens: 4096,
+        max_tokens: env.llm.maxTokens,
         system,
         output_config: {
           format: jsonSchemaOutputFormat(jsonSchema),
