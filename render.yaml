@@ -1,15 +1,39 @@
-# Render Blueprint — single free web service (API + built UI), embedded PGlite.
+# Render Blueprint — free web service (API + built UI) plus a free Postgres.
 #
-# Deliberately minimal for the hackathon demo:
-#  - No managed Postgres. Demo mode regenerates its fixtures on every boot, so the
-#    container's own disk (embedded PGlite) is enough and there is no 30-day free
-#    database to expire before the demo window closes. Set DATABASE_URL in the
-#    dashboard later if you ever want persistence.
-#  - No cron. The reconciliation poll is a safety net for real PayPal webhooks
-#    (FR-2); in demo mode there is nothing to reconcile, and a Render cron needs a
-#    paid plan. The in-process poller still runs inside the web service.
+# On the managed database, and why it is not the embedded PGlite that works
+# everywhere else. All three rows measured in a Linux container capped at 512 MiB,
+# the same ceiling as a Render free instance:
+#
+#   PGlite, no data directory yet   OOM-killed. `initdb` loads a second WASM
+#                                   module beside the main one and resident
+#                                   memory jumps ~300 MiB in one step.
+#   PGlite, data directory prebuilt survives, peaks at 419 MiB — under the
+#                                   ceiling, but only ~90 MiB spare before the
+#                                   model runs.
+#   Managed Postgres                peaks at 90 MiB, serves all 14 fixtures.
+#
+# PGlite's WASM heap cannot be shrunk: its module declares 2048 pages (128 MiB),
+# so a smaller `initialMemory` is a hard LinkError at startup. Hence Postgres in
+# production. Locally, DATABASE_URL is unset and the app still uses PGlite, so
+# `npm start` needs no database and the schema and queries are identical either
+# way — the driver is the only difference.
+#
+# NOTE: Render's free Postgres expires 30 days after creation. If this demo must
+# outlive that, either upgrade the database or create a fresh free one and update
+# DATABASE_URL. Demo mode rebuilds its fixtures on every boot, so nothing of value
+# is lost when it is replaced.
+#
+# No cron: the reconciliation poll is a safety net for real PayPal webhooks
+# (FR-2); in demo mode there is nothing to reconcile, and a Render cron needs a
+# paid plan. The in-process poller still runs inside the web service.
 #
 # Secrets marked `sync: false` are entered in the Render dashboard, never committed.
+databases:
+  - name: disputedesk-db
+    databaseName: disputedesk
+    user: disputedesk
+    plan: free
+
 services:
   - type: web
     name: disputedesk
@@ -38,6 +62,12 @@ services:
         value: "22"
       - key: NODE_ENV
         value: production
+      # Set -> node-postgres against the managed database above. Unset -> the
+      # embedded PGlite, which does not fit in 512 MiB on a cold start.
+      - key: DATABASE_URL
+        fromDatabase:
+          name: disputedesk-db
+          property: connectionString
       # No PayPal credentials -> demo mode (fixtures, no outbound calls). Explicit
       # so a stray credential can never flip a public demo into sandbox writes.
       - key: DEMO_MODE

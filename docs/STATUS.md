@@ -46,7 +46,7 @@ Snapshot: 2026-11-11. Each row uses one of four verdicts:
 | Sponsor | Verdict | Notes |
 |---|---|---|
 | AG Grid | Verified | Community edition: queue with sorting, quick filter, keyboard navigation, custom cell renderers. Row grouping is Enterprise-only, so urgency grouping uses filter chips. |
-| Render | Implemented, unverified | `render.yaml` blueprint (web service, Postgres, cron) has not been deployed. **Render Workflows is not integrated**: an in-process durable step runner (the PRD's documented fallback) provides retries and persisted steps. |
+| Render | Deploying; not yet live | `render.yaml` blueprint (free web service + free Postgres). Builds succeed; the first start attempts were OOM-killed on the 512 MiB free instance and the fixes are measured in §Deviations 1. **Render Workflows is not integrated**: an in-process durable step runner (the PRD's documented fallback) provides retries and persisted steps. |
 | Elastic | Implemented, unverified | Policy index, BM25 search, ES\|QL. Never run against a cluster. The Postgres FTS fallback is verified and is what demo mode uses. Search is lexical, not hybrid. |
 | KERNEL | Implemented, unverified | See FR-6. |
 | Postman | Verified | Collection generated from code; Newman passes 12 requests and 27 assertions against demo mode; runs in CI. |
@@ -58,7 +58,8 @@ Per PRD §14, any sponsor still unverified on Nov 7 must be removed from the REA
 
 ## Deviations from the PRD, and why
 
-1. **Embedded PGlite by default; Postgres through `DATABASE_URL`.** The Docker daemon was unavailable, and judges should not need Docker. PGlite is Postgres compiled to WASM, so the schema and queries are identical. *The `DATABASE_URL` / node-postgres path has not been run against a real server yet.*
+1. **Embedded PGlite for local runs; managed Postgres in production.** Judges should not need Docker, so with no configuration the app runs on PGlite (Postgres compiled to WASM), and the schema and queries are identical either way. **Verified 2026-11-12:** the `DATABASE_URL` / node-postgres path now runs against a real PostgreSQL 16 server — migrations apply, all 14 fixtures are served, the UI loads.
+   Production uses it because PGlite does not fit a 512 MiB free instance. Measured in a Linux container capped at 512 MiB: PGlite with no data directory is OOM-killed, because `initdb` loads a second WASM module and resident memory jumps ~300 MiB in a single step; with the directory prebuilt it survives at a 419 MiB peak; managed Postgres peaks at 90 MiB. PGlite's WASM heap cannot be shrunk — its module declares 2048 pages (128 MiB), so a smaller `initialMemory` is a hard LinkError.
 2. **The completeness score comes entirely from the rule-based rubric** (the PRD said "partly"). The model extracts facts and writes the narrative. The score is reproducible and testable.
 3. **Contradiction cap.** Evidence that contradicts delivery (wrong postcode, return to sender, carrier exception) caps the score at 69 and steers the recommendation towards an offer. This was added after hand-labelling showed that a wrong-address delivery would otherwise score STRONG.
 4. **No sampling parameters are sent.** Current Claude models reject them with a 400, and nothing equivalent is sent to Gemini either. Determinism comes from schema-constrained decoding and from rule-based scoring.
