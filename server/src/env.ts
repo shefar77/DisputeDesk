@@ -220,6 +220,15 @@ export const env = {
   /** Shared secret for the Render cron job calling POST /api/cron/poll. */
   cronSecret: str('CRON_SECRET'),
 
+  /**
+   * Run the evidence workflow for every dispute during boot.
+   *
+   * On by default so a fresh clone shows a populated queue. It uses the
+   * rule-based generator (see index.ts), so it costs nothing and needs no
+   * network; set it to false on a very small instance if even that is too much.
+   */
+  gatherOnBoot: bool('GATHER_ON_BOOT', true),
+
   /** Approver identity recorded on every approval row. */
   operator: str('OPERATOR_NAME') ?? 'Demo Merchant',
 } as const;

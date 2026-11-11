@@ -16,7 +16,7 @@
     "dev": "concurrently -k -n api,web -c cyan,magenta \"npm:dev:api\" \"npm:dev:web\"",
     "dev:api": "npm run dev -w @disputedesk/server",
     "dev:web": "npm run dev -w @disputedesk/web",
-    "build": "npm run build -w @disputedesk/web",
+    "build": "npm run build -w @disputedesk/web && npm run build -w @disputedesk/server",
     "start": "npm run start -w @disputedesk/server",
     "seed": "npm run seed -w @disputedesk/server",
     "typecheck": "tsc -p server/tsconfig.json --noEmit && tsc -p web/tsconfig.json --noEmit",

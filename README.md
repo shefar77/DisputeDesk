@@ -22,7 +22,7 @@ When a buyer opens an *Item not received* dispute, the seller has a fixed window
 ```bash
 git clone <this repo> && cd disputedesk
 npm install
-npm run build      # builds the web UI
+npm run build      # builds the web UI and compiles the server
 npm start          # http://localhost:8787
 ```
 
