@@ -43,12 +43,23 @@ Run these with the Postman collection (`postman/DisputeDesk.postman_collection.j
 
 | Step | Result | Date | Notes / debug_id |
 |---|---|---|---|
-| 1 Accounts and app | not run | | |
-| 2 Dispute filed | not run | | |
-| 3 Links observed | not run | | |
-| 4 provide-evidence | not run | | |
-| 4 send-message | not run | | |
-| 5 Create scope | not run | | |
-| 6 End-to-end in app | not run | | |
+| 1 Accounts and app | **done** | 2026-11-12 | Sandbox business + personal accounts created; REST app under the seller; client id and secret in `.env`. |
+| 2 Dispute filed | not run | | No checkout performed, so the seller account has no disputes. This is what blocks steps 4 and most of 3. |
+| 3 OAuth token | **done** | 2026-11-12 | `POST /v1/oauth2/token` → **200**, `Bearer`, `expires_in` 32400. Granted scopes include `disputes`. |
+| 3 List disputes | **done** | 2026-11-12 | `GET /v1/customer/disputes` → **200**, `items: []`, `paypal-debug-id: f252324010bb7`. Authenticated and authorised; the account simply has no cases. |
+| 3 Show dispute / links | not run | | Needs step 2. No dispute id exists to read, so the real `links` rels are still unobserved. |
+| 4 provide-evidence | not run | | Needs step 2. No write has ever been sent to PayPal. |
+| 4 send-message | not run | | Needs step 2. |
+| 5 Create scope | not run | | Not requested. |
+| 6 End-to-end in app | **partial** | 2026-11-12 | App started with the credentials set: boots in `sandbox` mode (`demoReason: null`), logs `PayPal gateway: SANDBOX mode baseUrl=https://api-m.sandbox.paypal.com`, health reports the Disputes API `ok`, and its own poll ran clean (`found=0, new=0, error=null`). The queue is empty because step 2 has not been done, so the approval flow has not run against a real dispute. |
+
+**Where this leaves the integration (2026-11-12).** Authentication and reads against
+the real Sandbox API are now verified from both a standalone script and the
+application itself — the credentials carry the `disputes` scope and the Disputes
+API answers 200. What remains unverified is everything that needs an actual
+dispute to exist: reading a live dispute's HATEOAS `links`, and every write
+(`provide-evidence`, `send-message`, `make-offer`, `accept-claim`). No write has
+ever been sent to PayPal. The demo gateway remains the path the demo uses, and
+every screen says so.
 
 **Go / no-go.** The product runs end to end in demo mode now. If step 4 fails for every manually filed dispute, PRD §12 says to discuss fallback C1 (invoice collections) before spending more time. Demo mode stays as the clearly labelled judge path either way.

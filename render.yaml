@@ -78,11 +78,16 @@ services:
       # --- AI: enter your Google AI Studio key in the dashboard -----------------
       - key: GEMINI_API_KEY
         sync: false
+      # NOT gemini-3-flash-preview: the free tier allows that model 20 requests
+      # per DAY, which a handful of visitors exhausts before lunch. Every call
+      # after that is a guaranteed 429 and a wasted round trip before the chain
+      # falls through to a lite model anyway. The lite tiers have workable
+      # quotas, so one of them is the primary and the preview model is last.
       - key: LLM_MODEL
-        value: gemini-3-flash-preview
-      # Tried in order when the preferred model is unavailable (free-tier 503s).
+        value: gemini-3.5-flash-lite
+      # Tried in order when the primary is unavailable (free-tier 503s).
       - key: LLM_FALLBACK_MODELS
-        value: gemini-3.1-flash-lite,gemini-3.5-flash-lite,gemini-3.8-flash
+        value: gemini-3.1-flash-lite,gemini-3.8-flash,gemini-3-flash-preview
       # Hard daily spend stop, enforced in code. Falls back to the rule-based
       # generator when reached, so a public demo can never run up a bill.
       - key: LLM_DAILY_CAP_USD

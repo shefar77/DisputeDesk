@@ -7,6 +7,21 @@ Snapshot: 2026-11-11. Each row uses one of four verdicts:
 - **Implemented, unverified:** the code is written and typechecks, but has never run against the real dependency.
 - **Not implemented.**
 
+## PayPal Sandbox verification (2026-11-12)
+
+Run against the real `https://api-m.sandbox.paypal.com`, from the standalone
+spike script and then from the application itself:
+
+| Call | Result |
+|---|---|
+| `POST /v1/oauth2/token` (client credentials) | **200**, `Bearer`, `expires_in` 32400; granted scopes include `disputes` |
+| `GET /v1/customer/disputes` | **200**, `items: []`, `paypal-debug-id f252324010bb7` |
+| App boot with credentials set | mode `sandbox`, `PayPal gateway: SANDBOX mode`, health `ok`, poll `found=0 new=0 error=null` |
+
+The sandbox seller account has no disputes, because no checkout was performed.
+So reading a live dispute's `links`, and every write, remain unverified against
+PayPal — the demo gateway still serves those paths and the UI labels them.
+
 ## Functional requirements (PRD §9)
 
 | ID | Requirement | Verdict | Evidence |
@@ -20,7 +35,7 @@ Snapshot: 2026-11-11. Each row uses one of four verdicts:
 | FR-7 | Schema-validated `EvidencePlan`; retry, then manual review | Verified | Structured outputs plus zod; mocked-wire tests cover refusal and semantic-invalid output; `withFallback` retries once and then uses the rule-based generator. |
 | FR-8 | Drafts cite only existing evidence ids | Verified | `validateDraft`; integration test over every fixture; eval metric at 100%. |
 | FR-9 | Exact outbound preview; approval bound to the payload hash | Verified | Integration tests for a hash mismatch, an edit after preview and a replayed approval. Every gateway write has a matching SENT approval row. |
-| FR-10 | `provide-evidence`, no silent retry of writes | Demo-verified | Writes use `retry: false`; on a network failure the dispute is re-read. Not yet sent to a real sandbox dispute (see `spike-G0.md`). |
+| FR-10 | `provide-evidence`, no silent retry of writes | Demo-verified | Writes use `retry: false`; on a network failure the dispute is re-read. **No write has ever been sent to PayPal.** Sandbox auth and reads are verified (2026-11-12), but the seller account has no disputes, so the write path is still demo-only (see `spike-G0.md`). |
 | FR-11 | Status changes reflected from webhooks and polls | Verified (demo) | e2e: approve, then UNDER_REVIEW, then a simulated resolution webhook, then RESOLVED in the timeline. |
 | FR-12 | Exportable audit log without secrets | Verified | Redaction happens at write time; tests check that tokens and secrets are absent; `GET /api/audit?download=1`. |
 | FR-13 | Sandbox/demo banner on every page | Verified | e2e checks four routes. |
@@ -71,7 +86,7 @@ Per PRD §14, any sponsor still unverified on Nov 7 must be removed from the REA
 
 ## Still open (PRD §29)
 
-- G0 sandbox spike, steps 1–6 (`spike-G0.md`).
+- G0 sandbox spike: steps 1 and 3 (auth + list) **done 2026-11-12**; step 2 (file a dispute) not done, which still blocks the write steps (`spike-G0.md`).
 - Merchant validation: zero conversations so far. The README says so.
 - Human grading of `docs/eval-drafts.md` against the PRD's 3-point rubric. (The model eval run itself is done — see §AI vs baseline above.)
 - Render deployment and a free hosted demo through Dec 15.
